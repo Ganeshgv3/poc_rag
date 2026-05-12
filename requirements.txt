@@ -1,0 +1,12 @@
+streamlit
+pymupdf
+sentence-transformers
+numpy
+requests
+chromadb
+fastapi
+uvicorn
+PyJWT
+PyMySQL
+python-multipart
+Werkzeug
