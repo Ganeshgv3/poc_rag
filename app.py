@@ -1,48 +1,38 @@
 import hashlib
-import json
 import os
 import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
-import chromadb
 import fitz
 import numpy as np
 import requests
 
-from prompts import build_prompt
-
-
-def load_env_file(env_path: Path) -> None:
-    if not env_path.exists():
-        return
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip("'").strip('"')
-        if key:
-            os.environ.setdefault(key, value)
+from chroma_helpers import (
+    create_chroma_client,
+    get_or_create_vector_collection,
+    load_streamlit_file_registry,
+    save_streamlit_file_registry,
+)
+from env_load import load_dotenv_for_project
+from prompts import build_chat_messages_for_ollama
 
 
 BASE_DIR = Path(__file__).parent
-load_env_file(BASE_DIR / ".env")
+load_dotenv_for_project(BASE_DIR)
 
 # Streamlit's source watcher can introspect optional transformer modules
 # and raise noisy import errors when extras (e.g., torchvision) are absent.
 os.environ.setdefault("STREAMLIT_SERVER_FILE_WATCHER_TYPE", "none")
 import streamlit as st
-from chromadb.api.models.Collection import Collection
 from sentence_transformers import SentenceTransformer
 
 DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = DATA_DIR / "uploads"
 CHROMA_DIR = DATA_DIR / "chroma"
-FILES_DB = DATA_DIR / "files.json"
+FILES_LEGACY = DATA_DIR / "files.json"
 OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 DEFAULT_TOP_K = int(os.getenv("TOP_K_DEFAULT", "3"))
@@ -63,6 +53,35 @@ NOT_FOUND_REPLIES = [
     "That exact detail is not visible in the selected PDF right now. Try rephrasing and I can re-check.",
 ]
 
+
+def context_memory_enabled() -> bool:
+    return (os.getenv("CONTEXT_MEMORY_ENABLED") or "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def context_memory_max_messages() -> int:
+    try:
+        return max(0, int(os.getenv("CONTEXT_MEMORY_MAX_MESSAGES", "24")))
+    except ValueError:
+        return 24
+
+
+def session_messages_to_memory(chat_messages: List[Dict]) -> List[Dict[str, str]]:
+    """Map Streamlit chat history to Ollama roles (excludes the current user message when caller passes a slice)."""
+    lim = context_memory_max_messages()
+    out: List[Dict[str, str]] = []
+    for m in chat_messages:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = (m.get("content") or "").strip()
+        if not content:
+            continue
+        out.append({"role": str(role), "content": content})
+    if lim and len(out) > lim:
+        out = out[-lim:]
+    return out
+
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 CHROMA_DIR.mkdir(parents=True, exist_ok=True)
@@ -78,20 +97,8 @@ def get_embedding_model() -> SentenceTransformer:
 
 
 @st.cache_resource
-def get_chroma_client() -> chromadb.PersistentClient:
-    return chromadb.PersistentClient(path=str(CHROMA_DIR))
-
-
-def load_file_registry() -> List[Dict]:
-    if not FILES_DB.exists():
-        return []
-    with FILES_DB.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def save_file_registry(records: List[Dict]) -> None:
-    with FILES_DB.open("w", encoding="utf-8") as handle:
-        json.dump(records, handle, indent=2)
+def get_chroma_client():
+    return create_chroma_client(CHROMA_DIR)
 
 
 def sha256_bytes(blob: bytes) -> str:
@@ -119,15 +126,11 @@ def chunk_text(text: str, chunk_size: int = 1100, overlap: int = 180) -> List[st
     return chunks
 
 
-def get_or_create_collection(client: chromadb.PersistentClient, collection_name: str) -> Collection:
-    return client.get_or_create_collection(name=collection_name, metadata={"hnsw:space": "cosine"})
-
-
 def ingest_pdf(
     pdf_name: str,
     pdf_bytes: bytes,
     model: SentenceTransformer,
-    client: chromadb.PersistentClient,
+    client,
     progress_callback=None,
 ) -> Tuple[bool, str]:
     def emit_progress(value: int, text: str) -> None:
@@ -135,9 +138,8 @@ def ingest_pdf(
             progress_callback(value, text)
 
     emit_progress(5, "Checking file...")
-    records = load_file_registry()
     digest = sha256_bytes(pdf_bytes)
-
+    records = load_streamlit_file_registry(client, FILES_LEGACY)
     already_exists = next((x for x in records if x["sha256"] == digest), None)
     if already_exists:
         emit_progress(100, "Already indexed.")
@@ -165,7 +167,7 @@ def ingest_pdf(
     file_path.write_bytes(pdf_bytes)
 
     collection_name = f"pdf_{digest[:16]}"
-    collection = get_or_create_collection(client, collection_name)
+    collection = get_or_create_vector_collection(client, collection_name)
 
     ids = [f"{digest}_{idx}" for idx in range(len(chunks))]
     metadatas = [{"chunk_index": idx, "filename": pdf_name, "sha256": digest} for idx in range(len(chunks))]
@@ -183,7 +185,7 @@ def ingest_pdf(
             "uploaded_at": datetime.utcnow().isoformat() + "Z",
         }
     )
-    save_file_registry(records)
+    save_streamlit_file_registry(client, records)
     emit_progress(100, "Upload complete.")
     return True, f"Indexed {pdf_name} with {len(chunks)} chunks."
 
@@ -192,13 +194,13 @@ def retrieve_context(
     query: str,
     file_record: Dict,
     model: SentenceTransformer,
-    client: chromadb.PersistentClient,
+    client,
     top_k: int,
 ) -> Tuple[List[str], List[float]]:
     query_embedding = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
     query_vector = np.asarray(query_embedding, dtype=np.float32).tolist()[0]
 
-    collection = get_or_create_collection(client, file_record["collection_name"])
+    collection = get_or_create_vector_collection(client, file_record["collection_name"])
     result = collection.query(
         query_embeddings=[query_vector],
         n_results=top_k,
@@ -363,13 +365,16 @@ def ask_ollama(
     max_output_tokens: int,
     temperature: float,
     allow_inference: bool,
+    prior_messages: Optional[List[Dict[str, str]]] = None,
 ) -> str:
-    prompt = build_prompt(question=question, contexts=contexts, allow_inference=allow_inference)
+    messages = build_chat_messages_for_ollama(
+        question, contexts, allow_inference, prior_messages=prior_messages
+    )
     response = requests.post(
         f"{OLLAMA_API_URL}/api/chat",
         json={
             "model": model_name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": False,
             "options": {
                 "num_predict": max_output_tokens,
@@ -460,7 +465,7 @@ with st.sidebar:
         else:
             st.info(message)
 
-    records = load_file_registry()
+    records = load_streamlit_file_registry(chroma_client, FILES_LEGACY)
     if not records:
         st.info("No PDF indexed yet.")
     else:
@@ -558,6 +563,13 @@ if user_question:
                         elif not contexts and not reasoning_mode:
                             answer = friendly_not_found_reply(user_question)
                         else:
+                            prior_messages = None
+                            if context_memory_enabled():
+                                prior_messages = session_messages_to_memory(
+                                    st.session_state.messages_by_file[chat_key][:-1]
+                                )
+                                if not prior_messages:
+                                    prior_messages = None
                             answer = ask_ollama(
                                 user_question,
                                 contexts,
@@ -565,6 +577,7 @@ if user_question:
                                 max_output_tokens=max_output_tokens,
                                 temperature=temperature,
                                 allow_inference=reasoning_mode,
+                                prior_messages=prior_messages,
                             )
                     if not is_friendly:
                         accuracy_label, accuracy_score = accuracy_from_signals(answer, contexts, distances)

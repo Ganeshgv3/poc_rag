@@ -1,8 +1,102 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+
+function isStreamPlaceholderMessage(message) {
+  return String(message?.id ?? "").startsWith("stream-");
+}
+
+function DocIconUpload({ className = "", ...rest }) {
+  return (
+    <svg
+      className={["doc-action-icon", className].filter(Boolean).join(" ")}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  );
+}
+
+function DocIconView({ className = "", ...rest }) {
+  return (
+    <svg
+      className={["doc-action-icon", "doc-action-icon--view", className].filter(Boolean).join(" ")}
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.85"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="8" y1="13" x2="16" y2="13" />
+      <line x1="8" y1="17" x2="14" y2="17" />
+      <line x1="8" y1="9" x2="12" y2="9" />
+    </svg>
+  );
+}
+
+function DocIconTrash({ className = "", ...rest }) {
+  return (
+    <svg
+      className={["doc-action-icon", className].filter(Boolean).join(" ")}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+  );
+}
+
+function DocIconEdit({ className = "", ...rest }) {
+  return (
+    <svg
+      className={["doc-action-icon", "doc-action-icon--edit", className].filter(Boolean).join(" ")}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
 
 export default function ChatPage() {
   const [files, setFiles] = useState([]);
@@ -20,6 +114,8 @@ export default function ChatPage() {
   const [exportFormat, setExportFormat] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [editingUserMessageId, setEditingUserMessageId] = useState(null);
+  const [editingDraft, setEditingDraft] = useState("");
   const selectedChatIdRef = useRef(null);
   const startFreshRef = useRef(localStorage.getItem("startFreshChat") === "1");
   const messagesContainerRef = useRef(null);
@@ -37,7 +133,10 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const toastTimerRef = useRef(null);
   const streamAbortRef = useRef(null);
-  const navigate = useNavigate();
+  const [showPdfViewer, setShowPdfViewer] = useState(false);
+  const [pdfObjectUrl, setPdfObjectUrl] = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const pdfObjectUrlRef = useRef(null);
   const user = useMemo(() => JSON.parse(localStorage.getItem("user") || "{}"), []);
 
   const animateScrollToBottom = (smooth = true) => {
@@ -286,23 +385,34 @@ export default function ChatPage() {
     }
   };
 
-  const sendQuestion = async (event) => {
-    event.preventDefault();
-    if (!selectedDocument || !question.trim() || sending) return;
-    const userMessage = { role: "user", content: question.trim() };
-    const streamMessageId = `stream-${Date.now()}`;
-    setMessages((prev) => [...prev, userMessage, { id: streamMessageId, role: "assistant", content: "" }]);
+  const reloadMessagesFromServer = async () => {
+    const cid = selectedChatIdRef.current;
+    if (!cid) return;
+    try {
+      const { data } = await api.get(`/chats/${cid}/messages`);
+      setMessages((data.messages || []).filter((m) => String(m?.content || "").trim().length > 0));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const executeStreamRequest = async (messageText, streamMessageId, replaceUserMessageId) => {
     const startedAt = performance.now();
-    const messageText = question.trim();
     let streamText = "";
     let activeChatId = selectedChatIdRef.current;
-    setQuestion("");
-    setSending(true);
-    setError("");
+    let donePayload = null;
     try {
       const controller = new AbortController();
       streamAbortRef.current = controller;
       const token = localStorage.getItem("token");
+      const body = {
+        document_id: selectedDocument.id,
+        question: messageText,
+        chat_id: isCreatingNewChat ? null : selectedChatIdRef.current,
+      };
+      if (replaceUserMessageId != null) {
+        body.replace_user_message_id = replaceUserMessageId;
+      }
       const response = await fetch(`${API_BASE_URL}/chat/stream`, {
         method: "POST",
         signal: controller.signal,
@@ -310,11 +420,7 @@ export default function ChatPage() {
           "Content-Type": "application/json",
           Authorization: token ? `Bearer ${token}` : "",
         },
-        body: JSON.stringify({
-          document_id: selectedDocument.id,
-          question: messageText,
-          chat_id: isCreatingNewChat ? null : selectedChatIdRef.current,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok || !response.body) {
@@ -324,7 +430,6 @@ export default function ChatPage() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let donePayload = null;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -384,15 +489,14 @@ export default function ChatPage() {
         }
         setIsCreatingNewChat(false);
         await loadChatListOnly(selectedDocument.id);
+        await reloadMessagesFromServer();
       }
     } catch (err) {
       if (err?.name === "AbortError") {
         const stoppedContent = streamText.trim() || "Response stopped.";
         setMessages((prev) =>
           prev.map((msg) =>
-            msg.id === streamMessageId
-              ? { ...msg, content: stoppedContent, stopped: true }
-              : msg
+            msg.id === streamMessageId ? { ...msg, content: stoppedContent, stopped: true } : msg
           )
         );
         if (activeChatId) {
@@ -406,13 +510,22 @@ export default function ChatPage() {
             if (selectedDocument?.id) {
               await loadChatListOnly(selectedDocument.id);
             }
+            await reloadMessagesFromServer();
           } catch (_saveErr) {
             // Non-fatal: user still sees stopped content in UI.
           }
         }
         showSuccessToast("Stopped");
       } else {
-        setMessages((prev) => prev.filter((msg) => msg.id !== streamMessageId));
+        if (replaceUserMessageId != null && selectedChatIdRef.current) {
+          try {
+            await reloadMessagesFromServer();
+          } catch {
+            /* ignore */
+          }
+        } else {
+          setMessages((prev) => prev.filter((msg) => msg.id !== streamMessageId));
+        }
         setError(err?.message || "Failed to generate response.");
       }
     } finally {
@@ -422,6 +535,45 @@ export default function ChatPage() {
         questionInputRef.current?.focus();
       });
     }
+  };
+
+  const sendQuestion = async (event) => {
+    event.preventDefault();
+    if (!selectedDocument || !question.trim() || sending) return;
+    const userMessage = { role: "user", content: question.trim() };
+    const streamMessageId = `stream-${Date.now()}`;
+    setMessages((prev) => [...prev, userMessage, { id: streamMessageId, role: "assistant", content: "" }]);
+    const messageText = question.trim();
+    setQuestion("");
+    setSending(true);
+    setError("");
+    await executeStreamRequest(messageText, streamMessageId, null);
+  };
+
+  const cancelEditUserMessage = () => {
+    setEditingUserMessageId(null);
+    setEditingDraft("");
+  };
+
+  const submitEditedUserMessage = async (messageId) => {
+    const next = editingDraft.trim();
+    if (!next || !selectedDocument || !selectedChatId || sending) return;
+    const mid = Number(messageId);
+    if (!Number.isFinite(mid)) return;
+    const idx = messages.findIndex((m) => m.id === mid);
+    if (idx === -1) return;
+    cancelEditUserMessage();
+    const streamMessageId = `stream-${Date.now()}`;
+    setMessages((prev) => {
+      const updated = prev.map((m, i) => (i === idx ? { ...m, content: next } : m));
+      const head = updated.slice(0, idx + 1);
+      const tail = updated.slice(idx + 1);
+      const withoutFollowingAssistant = tail[0]?.role === "assistant" ? tail.slice(1) : tail;
+      return [...head, { id: streamMessageId, role: "assistant", content: "" }, ...withoutFollowingAssistant];
+    });
+    setSending(true);
+    setError("");
+    await executeStreamRequest(next, streamMessageId, mid);
   };
 
   const stopProcess = () => {
@@ -437,6 +589,7 @@ export default function ChatPage() {
     setMessages([]);
     setQuestion("");
     setError("");
+    cancelEditUserMessage();
   };
 
   const deleteSelectedDocument = async () => {
@@ -461,6 +614,7 @@ export default function ChatPage() {
     selectedChatIdRef.current = chatId;
     setIsCreatingNewChat(false);
     setError("");
+    cancelEditUserMessage();
     try {
       const { data } = await api.get(`/chats/${chatId}/messages`);
       setMessages((data.messages || []).filter((message) => String(message?.content || "").trim().length > 0));
@@ -539,6 +693,97 @@ export default function ChatPage() {
     }
   };
 
+  const closePdfViewer = useCallback(() => {
+    if (pdfObjectUrlRef.current) {
+      URL.revokeObjectURL(pdfObjectUrlRef.current);
+      pdfObjectUrlRef.current = null;
+    }
+    setPdfObjectUrl(null);
+    setShowPdfViewer(false);
+    setPdfLoading(false);
+  }, []);
+
+  const openPdfViewer = async () => {
+    if (!selectedDocument) return;
+    const token = localStorage.getItem("token");
+    if (!token) {
+      setError("You are not signed in. Please log in again.");
+      navigate("/login");
+      return;
+    }
+    setPdfLoading(true);
+    setError("");
+    try {
+      const base = String(api.defaults.baseURL || API_BASE_URL).replace(/\/$/, "");
+      const pdfUrl = `${base}/files/${selectedDocument.id}/pdf`;
+      const res = await fetch(pdfUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: "omit",
+      });
+      if (res.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        setError("Session expired. Please sign in again.");
+        navigate("/login");
+        return;
+      }
+      if (!res.ok) {
+        let msg = `Could not load PDF (${res.status}).`;
+        try {
+          const parsed = await res.json();
+          if (parsed?.detail) msg = String(parsed.detail);
+        } catch {
+          /* keep default */
+        }
+        setError(msg);
+        return;
+      }
+      const blob = await res.blob();
+      if (!blob || blob.size === 0) {
+        setError("Empty PDF response from server.");
+        return;
+      }
+      const typed = blob.type === "application/pdf" ? blob : new Blob([blob], { type: "application/pdf" });
+      if (pdfObjectUrlRef.current) {
+        URL.revokeObjectURL(pdfObjectUrlRef.current);
+      }
+      const url = URL.createObjectURL(typed);
+      pdfObjectUrlRef.current = url;
+      setPdfObjectUrl(url);
+      setShowPdfViewer(true);
+    } catch (err) {
+      setError(err?.message || "Could not load PDF.");
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (pdfObjectUrlRef.current) {
+        URL.revokeObjectURL(pdfObjectUrlRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showPdfViewer) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") closePdfViewer();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showPdfViewer, closePdfViewer]);
+
+  useEffect(() => {
+    if (!showPdfViewer) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [showPdfViewer]);
+
   return (
     <div className="chat-shell">
       <aside className="sidebar">
@@ -549,7 +794,7 @@ export default function ChatPage() {
         </div>
 
         <div className="sidebar-section-title">Documents</div>
-        <div className="sidebar-top compact">
+        <div className="sidebar-top compact doc-actions">
           <select
             className="doc-select"
             value={selectedDocument?.id || ""}
@@ -565,27 +810,67 @@ export default function ChatPage() {
               </option>
             ))}
           </select>
-          <label className="upload-btn">
-            {uploading ? (
-              <span className="upload-progress-wrap">
-                <span className="upload-progress-label">{`Uploading ${uploadProgress}%`}</span>
-                <span className="upload-progress-track">
-                  <span className="upload-progress-fill" style={{ width: `${uploadProgress}%` }} />
+          <div className={`doc-action-row${uploading ? " doc-action-row--uploading" : ""}`}>
+            <label className="upload-btn doc-pill-btn" title="Upload a PDF from your device" aria-label="Upload PDF">
+              {uploading ? (
+                <span className="upload-progress-wrap">
+                  <span className="upload-progress-label doc-upload-progress-head">
+                    <DocIconUpload className="doc-action-icon--muted" />
+                    <span>{`Uploading ${uploadProgress}%`}</span>
+                  </span>
+                  <span className="upload-progress-track">
+                    <span className="upload-progress-fill" style={{ width: `${uploadProgress}%` }} />
+                  </span>
                 </span>
-              </span>
-            ) : (
-              "Upload PDF"
-            )}
-            <input type="file" accept="application/pdf" onChange={uploadFile} disabled={uploading} />
-          </label>
-          <button
-            type="button"
-            className="delete-doc-btn"
-            onClick={() => setShowDeleteModal(true)}
-            disabled={!selectedDocument || deletingDocument || uploading}
-          >
-            {deletingDocument ? "Deleting..." : "Delete PDF"}
-          </button>
+              ) : (
+                <span className="doc-action-content">
+                  <DocIconUpload />
+                  <span className="doc-action-text">Upload</span>
+                </span>
+              )}
+              <input type="file" accept="application/pdf" onChange={uploadFile} disabled={uploading} />
+            </label>
+            <button
+              type="button"
+              className="view-pdf-btn doc-pill-btn"
+              onClick={openPdfViewer}
+              disabled={!selectedDocument || pdfLoading || uploading}
+              title={selectedDocument ? "Open this PDF in a preview window" : "Select a document first"}
+              aria-label="View PDF"
+            >
+              {pdfLoading ? (
+                <span className="doc-action-content">
+                  <DocIconView className="doc-action-icon--pulse" />
+                  <span className="doc-action-text">Opening…</span>
+                </span>
+              ) : (
+                <span className="doc-action-content">
+                  <DocIconView />
+                  <span className="doc-action-text">View</span>
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              className="delete-doc-btn doc-pill-btn"
+              onClick={() => setShowDeleteModal(true)}
+              disabled={!selectedDocument || deletingDocument || uploading}
+              title="Remove this PDF and its chats"
+              aria-label="Delete PDF"
+            >
+              {deletingDocument ? (
+                <span className="doc-action-content">
+                  <DocIconTrash className="doc-action-icon--pulse" />
+                  <span className="doc-action-text">Deleting…</span>
+                </span>
+              ) : (
+                <span className="doc-action-content">
+                  <DocIconTrash />
+                  <span className="doc-action-text">Delete</span>
+                </span>
+              )}
+            </button>
+          </div>
         </div>
 
         <div className="sidebar-section-title">Recents</div>
@@ -680,11 +965,14 @@ export default function ChatPage() {
             <div className="welcome-box">Ask anything about your selected PDF.</div>
           ) : (
             messages
-              .filter((message) => String(message?.content || "").trim().length > 0)
+              .filter(
+                (message) =>
+                  String(message?.content || "").trim().length > 0 || isStreamPlaceholderMessage(message)
+              )
               .map((message, index) => (
               <div key={message.id || index} className={`message ${message.role}`}>
-                <div className="bubble-wrap">
-                  {message.role === "assistant" ? (
+                <div className={`bubble-wrap ${message.role === "user" ? "bubble-wrap--user-hover" : ""}`}>
+                  {message.role === "assistant" && String(message.content || "").trim().length > 0 ? (
                     <button
                       type="button"
                       className="copy-answer-btn"
@@ -695,7 +983,58 @@ export default function ChatPage() {
                       📋
                     </button>
                   ) : null}
-                  <div className="bubble">{message.content}</div>
+                  {message.role === "user" &&
+                  message.id != null &&
+                  Number.isFinite(Number(message.id)) &&
+                  selectedChatId &&
+                  !sending &&
+                  editingUserMessageId !== message.id ? (
+                    <button
+                      type="button"
+                      className="message-edit-btn"
+                      onClick={() => {
+                        setEditingUserMessageId(message.id);
+                        setEditingDraft(String(message.content || ""));
+                      }}
+                      aria-label="Edit message"
+                      title="Edit question"
+                    >
+                      <DocIconEdit />
+                    </button>
+                  ) : null}
+                  {message.role === "user" && editingUserMessageId === message.id ? (
+                    <div className="user-message-editor">
+                      <textarea
+                        className="user-message-editor-input"
+                        value={editingDraft}
+                        onChange={(e) => setEditingDraft(e.target.value)}
+                        rows={3}
+                        autoFocus
+                      />
+                      <div className="user-message-editor-actions">
+                        <button
+                          type="button"
+                          className="user-message-save-btn"
+                          onClick={() => submitEditedUserMessage(message.id)}
+                        >
+                          Save & re-run
+                        </button>
+                        <button type="button" className="user-message-cancel-btn" onClick={cancelEditUserMessage}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : message.role === "assistant" &&
+                    isStreamPlaceholderMessage(message) &&
+                    !String(message.content || "").trim() ? (
+                    <div className="bubble typing-bubble">
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                    </div>
+                  ) : (
+                    <div className="bubble">{message.content}</div>
+                  )}
                   {message.role === "assistant" && Number.isFinite(message.latency_seconds) ? (
                     <div className="message-meta">
                       {message.accuracy_label && Number.isFinite(message.accuracy_score)
@@ -708,7 +1047,7 @@ export default function ChatPage() {
               </div>
               ))
           )}
-          {sending ? (
+          {sending && !messages.some(isStreamPlaceholderMessage) ? (
             <div className="message assistant">
               <div className="bubble typing-bubble">
                 <span className="typing-dot" />
@@ -739,6 +1078,38 @@ export default function ChatPage() {
         </form>
         {error && <div className="error-text chat-error">{error}</div>}
       </main>
+      {showPdfViewer && pdfObjectUrl && selectedDocument ? (
+        <div
+          className="pdf-viewer-backdrop"
+          onClick={closePdfViewer}
+          role="presentation"
+        >
+          <div
+            className="pdf-viewer-shell"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pdf-viewer-title"
+          >
+            <header className="pdf-viewer-toolbar">
+              <div className="pdf-viewer-title-block">
+                <span className="pdf-viewer-badge" aria-hidden="true">
+                  PDF
+                </span>
+                <h2 id="pdf-viewer-title" className="pdf-viewer-title">
+                  {selectedDocument.filename}
+                </h2>
+              </div>
+              <button type="button" className="pdf-viewer-close" onClick={closePdfViewer} aria-label="Close viewer">
+                ×
+              </button>
+            </header>
+            <div className="pdf-viewer-frame-wrap">
+              <iframe title={selectedDocument.filename} src={pdfObjectUrl} className="pdf-viewer-frame" />
+            </div>
+          </div>
+        </div>
+      ) : null}
       {showDeleteModal && selectedDocument ? (
         <div className="modal-backdrop" onClick={() => !deletingDocument && setShowDeleteModal(false)}>
           <div className="confirm-modal" onClick={(e) => e.stopPropagation()}>

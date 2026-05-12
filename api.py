@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import chromadb
 import fitz
 import jwt
 import numpy as np
@@ -16,51 +15,62 @@ import requests
 import uvicorn
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from prompts import build_prompt
+from chroma_helpers import create_chroma_client, delete_named_collection, get_or_create_vector_collection
+from env_load import format_env_search_list, load_dotenv_for_project
+from prompts import build_chat_messages_for_ollama
 
 
 BASE_DIR = Path(__file__).parent
-
-
-def load_env_file(env_path: Path) -> None:
-    if not env_path.exists():
-        return
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip("'").strip('"')
-        if key:
-            os.environ.setdefault(key, value)
-
-
-load_env_file(BASE_DIR / ".env")
+load_dotenv_for_project(BASE_DIR)
 
 DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = DATA_DIR / "uploads"
 CHROMA_DIR = DATA_DIR / "chroma"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-CHROMA_DIR.mkdir(parents=True, exist_ok=True)
-
 OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-me-secret")
 JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", "120"))
 
-MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
-MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
-MYSQL_USER = os.getenv("MYSQL_USER", "root")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "rag_app")
+
+def context_memory_enabled() -> bool:
+    return (os.getenv("CONTEXT_MEMORY_ENABLED") or "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def context_memory_max_messages() -> int:
+    try:
+        return max(0, int(os.getenv("CONTEXT_MEMORY_MAX_MESSAGES", "24")))
+    except ValueError:
+        return 24
+
+
+def fetch_prior_messages(cur, chat_id: int, *, exclude_last_user: bool) -> List[Dict[str, str]]:
+    limit = context_memory_max_messages()
+    if limit <= 0 or not chat_id:
+        return []
+    cur.execute(
+        "SELECT role, content FROM messages WHERE chat_id=%s ORDER BY id DESC LIMIT %s",
+        (chat_id, limit),
+    )
+    rows = list(reversed(cur.fetchall() or []))
+    if exclude_last_user and rows and rows[-1].get("role") == "user":
+        rows = rows[:-1]
+    out: List[Dict[str, str]] = []
+    for r in rows:
+        role = r.get("role")
+        content = (r.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        out.append({"role": str(role), "content": content})
+    return out
+
 
 app = FastAPI(title="RAG Chat API")
 app.add_middleware(
@@ -75,18 +85,38 @@ security = HTTPBearer(auto_error=False)
 
 def db_conn():
     return pymysql.connect(
-        host=MYSQL_HOST,
-        port=MYSQL_PORT,
-        user=MYSQL_USER,
-        password=MYSQL_PASSWORD,
-        database=MYSQL_DATABASE,
+        host=os.getenv("MYSQL_HOST", "127.0.0.1"),
+        port=int(os.getenv("MYSQL_PORT", "3306")),
+        user=os.getenv("MYSQL_USER", "root"),
+        password=os.getenv("MYSQL_PASSWORD", ""),
+        database=os.getenv("MYSQL_DATABASE", "rag_app"),
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=True,
     )
 
 
 def init_db():
-    conn = db_conn()
+    try:
+        conn = db_conn()
+    except pymysql.err.OperationalError as exc:
+        errno = exc.args[0] if exc.args else None
+        if errno == 1045:
+            user = os.getenv("MYSQL_USER", "root")
+            password_set = bool(os.getenv("MYSQL_PASSWORD", "").strip())
+            raise RuntimeError(
+                "MySQL login failed (1045 Access denied). Set MYSQL_USER and MYSQL_PASSWORD "
+                f"(variable name must be exactly MYSQL_PASSWORD). "
+                f"Env files checked (later overrides earlier): {format_env_search_list(BASE_DIR)}. "
+                f"You can point to a specific file with DOTENV_PATH=/path/to/.env. "
+                f"Currently user={user!r}, MYSQL_PASSWORD={'set' if password_set else 'missing or empty'}."
+            ) from exc
+        if errno == 1049:
+            dbname = os.getenv("MYSQL_DATABASE", "rag_app")
+            raise RuntimeError(
+                f"MySQL database {dbname!r} does not exist (1049). Create it first, e.g. "
+                f"`CREATE DATABASE {dbname}` then restart the API."
+            ) from exc
+        raise RuntimeError(f"MySQL connection failed: {exc}") from exc
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -160,12 +190,8 @@ def get_embedding_model():
 def get_chroma_client():
     global _chroma_client
     if _chroma_client is None:
-        _chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+        _chroma_client = create_chroma_client(CHROMA_DIR)
     return _chroma_client
-
-
-def get_or_create_collection(client: chromadb.PersistentClient, collection_name: str):
-    return client.get_or_create_collection(name=collection_name, metadata={"hnsw:space": "cosine"})
 
 
 def sha256_bytes(blob: bytes) -> str:
@@ -235,19 +261,27 @@ class ChatPayload(BaseModel):
     document_id: int
     question: str
     chat_id: Optional[int] = None
+    replace_user_message_id: Optional[int] = None
 
 
 class AssistantMessagePayload(BaseModel):
     content: str
 
 
-def ask_ollama(question: str, contexts: List[str], model_name: str) -> str:
-    prompt = build_prompt(question=question, contexts=contexts, allow_inference=True)
+def ask_ollama(
+    question: str,
+    contexts: List[str],
+    model_name: str,
+    prior_messages: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    messages = build_chat_messages_for_ollama(
+        question, contexts, allow_inference=True, prior_messages=prior_messages
+    )
     response = requests.post(
         f"{OLLAMA_API_URL}/api/chat",
         json={
             "model": model_name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": False,
             "options": {"temperature": 0.2, "num_predict": 220},
         },
@@ -259,13 +293,20 @@ def ask_ollama(question: str, contexts: List[str], model_name: str) -> str:
     return str(message.get("content") or payload.get("response") or "").strip()
 
 
-def stream_ollama_answer(question: str, contexts: List[str], model_name: str):
-    prompt = build_prompt(question=question, contexts=contexts, allow_inference=True)
+def stream_ollama_answer(
+    question: str,
+    contexts: List[str],
+    model_name: str,
+    prior_messages: Optional[List[Dict[str, str]]] = None,
+):
+    messages = build_chat_messages_for_ollama(
+        question, contexts, allow_inference=True, prior_messages=prior_messages
+    )
     response = requests.post(
         f"{OLLAMA_API_URL}/api/chat",
         json={
             "model": model_name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": True,
             "options": {"temperature": 0.2, "num_predict": 220},
         },
@@ -458,7 +499,7 @@ def retrieve_context(query: str, collection_name: str, top_k: int = 3) -> Tuple[
     model = get_embedding_model()
     query_embedding = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
     query_vector = np.asarray(query_embedding, dtype=np.float32).tolist()[0]
-    collection = get_or_create_collection(get_chroma_client(), collection_name)
+    collection = get_or_create_vector_collection(get_chroma_client(), collection_name)
     result = collection.query(
         query_embeddings=[query_vector],
         n_results=top_k,
@@ -538,6 +579,31 @@ def list_files(user_id: int = Depends(auth_user)):
         conn.close()
 
 
+@app.get("/api/files/{document_id}/pdf")
+def get_document_pdf(document_id: int, user_id: int = Depends(auth_user)):
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT path, filename FROM documents WHERE id=%s AND user_id=%s",
+                (document_id, user_id),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        file_path = Path(row["path"])
+        if not file_path.is_file():
+            raise HTTPException(status_code=404, detail="PDF file is missing on the server.")
+        download_name = row.get("filename") or file_path.name
+        return FileResponse(
+            path=str(file_path),
+            media_type="application/pdf",
+            filename=download_name,
+        )
+    finally:
+        conn.close()
+
+
 @app.post("/api/files/upload")
 async def upload_file(file: UploadFile = File(...), user_id: int = Depends(auth_user)):
     if file is None or not file.filename.lower().endswith(".pdf"):
@@ -567,7 +633,7 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(auth_
             file_path.write_bytes(pdf_bytes)
 
             collection_name = f"pdf_{digest[:16]}"
-            collection = get_or_create_collection(get_chroma_client(), collection_name)
+            collection = get_or_create_vector_collection(get_chroma_client(), collection_name)
             ids = [f"{digest}_{idx}" for idx in range(len(chunks))]
             metadatas = [
                 {"chunk_index": idx, "filename": original_name, "sha256": digest}
@@ -608,7 +674,7 @@ def delete_file(document_id: int, user_id: int = Depends(auth_user)):
             collection_name = doc.get("collection_name")
             if collection_name:
                 try:
-                    get_chroma_client().delete_collection(name=collection_name)
+                    delete_named_collection(get_chroma_client(), collection_name)
                 except Exception:
                     # Keep API resilient if vector collection is already missing/corrupt.
                     pass
@@ -660,6 +726,10 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 )
                 chat_id = cur.lastrowid
 
+            prior_messages: List[Dict[str, str]] = []
+            if context_memory_enabled() and chat_id:
+                prior_messages = fetch_prior_messages(cur, chat_id, exclude_last_user=False)
+
             started_at = time.perf_counter()
             contexts, distances = retrieve_context(question, doc["collection_name"], top_k=3)
             if re.match(
@@ -674,7 +744,7 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
             elif not contexts:
                 answer = friendly_not_found_reply(question)
             else:
-                answer = ask_ollama(question, contexts, OLLAMA_MODEL)
+                answer = ask_ollama(question, contexts, OLLAMA_MODEL, prior_messages=prior_messages or None)
             answer = clean_answer_text(answer)
 
             cur.execute(
@@ -720,6 +790,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
         raise HTTPException(status_code=400, detail="document_id and question are required.")
 
     conn = db_conn()
+    replace_assistant_message_id: Optional[int] = None
     with conn.cursor() as cur:
         cur.execute(
             "SELECT id, collection_name FROM documents WHERE id=%s AND user_id=%s",
@@ -747,10 +818,47 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
             )
             chat_id = cur.lastrowid
 
-        cur.execute(
-            "INSERT INTO messages (chat_id, role, content) VALUES (%s, 'user', %s)",
-            (chat_id, question),
-        )
+        replace_id = payload.replace_user_message_id
+        if replace_id:
+            if not chat_id:
+                raise HTTPException(status_code=400, detail="chat_id is required when editing a message.")
+            cur.execute(
+                """
+                SELECT m.id, m.role
+                FROM messages m
+                INNER JOIN chats c ON c.id = m.chat_id
+                WHERE m.id = %s AND m.chat_id = %s AND c.user_id = %s AND c.document_id = %s
+                """,
+                (replace_id, chat_id, user_id, document_id),
+            )
+            target = cur.fetchone()
+            if not target or target.get("role") != "user":
+                raise HTTPException(status_code=404, detail="User message not found for this chat.")
+            cur.execute(
+                "UPDATE messages SET content=%s WHERE id=%s AND chat_id=%s",
+                (question, replace_id, chat_id),
+            )
+            cur.execute(
+                """
+                SELECT id FROM messages
+                WHERE chat_id=%s AND id > %s AND role='assistant'
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (chat_id, replace_id),
+            )
+            assistant_row = cur.fetchone()
+            if assistant_row:
+                replace_assistant_message_id = int(assistant_row["id"])
+        else:
+            cur.execute(
+                "INSERT INTO messages (chat_id, role, content) VALUES (%s, 'user', %s)",
+                (chat_id, question),
+            )
+
+        prior_messages: List[Dict[str, str]] = []
+        if context_memory_enabled() and chat_id:
+            prior_messages = fetch_prior_messages(cur, chat_id, exclude_last_user=True)
 
     try:
         contexts, distances = retrieve_context(question, doc["collection_name"], top_k=3)
@@ -784,7 +892,9 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                     answer_parts.append(part)
                     yield sse_event({"type": "token", "delta": part})
             else:
-                for delta in stream_ollama_answer(question, contexts, OLLAMA_MODEL):
+                for delta in stream_ollama_answer(
+                    question, contexts, OLLAMA_MODEL, prior_messages=prior_messages or None
+                ):
                     if not delta:
                         continue
                     answer_parts.append(delta)
@@ -792,10 +902,16 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
 
             final_answer = clean_answer_text("".join(answer_parts))
             with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO messages (chat_id, role, content) VALUES (%s, 'assistant', %s)",
-                    (chat_id, final_answer),
-                )
+                if replace_id and replace_assistant_message_id:
+                    cur.execute(
+                        "UPDATE messages SET content=%s WHERE id=%s AND chat_id=%s",
+                        (final_answer, replace_assistant_message_id, chat_id),
+                    )
+                else:
+                    cur.execute(
+                        "INSERT INTO messages (chat_id, role, content) VALUES (%s, 'assistant', %s)",
+                        (chat_id, final_answer),
+                    )
                 cur.execute(
                     "SELECT content FROM messages WHERE chat_id=%s AND role='user' ORDER BY id ASC LIMIT 8",
                     (chat_id,),
@@ -853,7 +969,7 @@ def chat_messages(chat_id: int, user_id: int = Depends(auth_user)):
                 raise HTTPException(status_code=404, detail="Chat not found.")
 
             cur.execute(
-                "SELECT role, content, created_at FROM messages WHERE chat_id=%s ORDER BY id ASC",
+                "SELECT id, role, content, created_at FROM messages WHERE chat_id=%s ORDER BY id ASC",
                 (chat_id,),
             )
             messages = cur.fetchall()

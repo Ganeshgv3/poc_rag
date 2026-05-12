@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Dict, List, Optional
+
+MEMORY_SYSTEM_PROMPT = (
+    "Earlier messages are a short recap of previous turns in this chat about the same PDF. "
+    "Use them only for continuity (pronouns, implicit references, what the user already asked). "
+    "The final user message contains freshly retrieved excerpts under Context; "
+    "treat that Context as the primary ground truth for factual claims in your reply."
+)
 
 
 SYSTEM_PROMPT = (
@@ -70,4 +77,31 @@ Conversation rules:
 - After small-talk reply, gently guide user back to PDF queries.
 - Keep tone friendly, professional, and concise.
 """.strip()
+
+
+def build_chat_messages_for_ollama(
+    question: str,
+    contexts: List[str],
+    allow_inference: bool,
+    prior_messages: Optional[List[Dict[str, str]]] = None,
+) -> List[Dict[str, str]]:
+    """Multi-turn messages for Ollama: optional recap + current RAG user prompt."""
+    prior = prior_messages or []
+    cleaned: List[Dict[str, str]] = []
+    for m in prior:
+        role = m.get("role")
+        content = (m.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        max_len = 1200 if role == "user" else 2000
+        if len(content) > max_len:
+            content = content[: max_len - 3] + "..."
+        cleaned.append({"role": str(role), "content": content})
+
+    messages: List[Dict[str, str]] = []
+    if cleaned:
+        messages.append({"role": "system", "content": MEMORY_SYSTEM_PROMPT})
+    messages.extend(cleaned)
+    messages.append({"role": "user", "content": build_prompt(question, contexts, allow_inference)})
+    return messages
 

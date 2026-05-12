@@ -4,6 +4,7 @@ sentence-transformers
 numpy
 requests
 chromadb
+qdrant-client
 fastapi
 uvicorn
 PyJWT
