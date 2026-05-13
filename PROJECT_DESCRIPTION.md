@@ -1,67 +1,97 @@
 # Project Description - RAG PDF Chat App
 
-## What this project does
+## Overview
 
-This project is a Retrieval-Augmented Generation (RAG) application for chatting with uploaded PDF files.
-Users upload a PDF, the app splits the text into chunks, creates embeddings, stores those vectors in ChromaDB, and answers user questions by retrieving relevant chunks before calling an LLM (Ollama).
+This repository is a Retrieval-Augmented Generation (RAG) app for chatting with uploaded PDFs.
+It provides a modern API + web client flow and a legacy Streamlit flow.
 
-The repository contains two app flows:
+- Current app: `api.py` (FastAPI) + `frontend/` (React + Vite)
+- Legacy app: `app.py` (Streamlit)
 
-- `app.py`: legacy Streamlit single-app experience.
-- `api.py` + `frontend/`: current FastAPI backend with React frontend and JWT auth.
+At a high level, the app:
+1. uploads and stores PDFs,
+2. extracts and chunks text,
+3. embeds chunks with Sentence Transformers,
+4. stores vectors in a configured vector backend,
+5. retrieves relevant chunks for each question,
+6. calls Ollama to generate grounded answers.
 
-## Main architecture
+## Current architecture
 
-1. PDF upload
-- PDF file is uploaded from UI.
-- Raw PDF is saved to `data/uploads`.
+### 1) Ingestion
 
-2. Extraction and chunking
-- Text is extracted with PyMuPDF (`fitz`).
-- Text is chunked with overlap for better retrieval quality.
+- PDF files are uploaded from UI and stored under `data/uploads`.
+- Text is extracted using PyMuPDF (`fitz`) via `text_chunking.extract_text`.
+- Text is normalized (line merge, whitespace cleanup, de-hyphenation) and chunked with overlap.
+- Chunking is tunable with environment variables:
+  - `PDF_CHUNK_SIZE` (default around 1100)
+  - `PDF_CHUNK_OVERLAP` (default around 180)
 
-3. Embedding and vector storage
-- Embeddings are generated using `sentence-transformers/all-MiniLM-L6-v2`.
-- Chunk text + vectors are stored in local ChromaDB at `data/chroma`.
+### 2) Embedding and vector store
 
-4. Retrieval and answer generation
-- User question is embedded.
-- Top-k relevant chunks are retrieved from Chroma.
-- Retrieved context is injected into the prompt (`prompts.py`).
-- Ollama generates the final answer.
+- Embedding model: `sentence-transformers/all-MiniLM-L6-v2`.
+- Vector backend is selected through env:
+  - `VECTOR_BACKEND=chroma` (default, local persistent store under `data/chroma`)
+  - `VECTOR_BACKEND=qdrant` (Qdrant via `QDRANT_URL`, optional `QDRANT_API_KEY`)
+- Vector helper logic is centralized in `vector_store.py`.
+- `chroma_helpers.py` is a compatibility shim re-exporting vector helpers.
 
-## Data storage used
+### 3) Retrieval and answer generation
 
-- **ChromaDB (local, filesystem)**: chunk documents, embeddings, vector index.
-- **MySQL**: users, documents metadata, chats, and messages (FastAPI flow).
-- **JSON file (`data/files.json`)**: file registry for Streamlit legacy flow.
-- **Uploads folder (`data/uploads`)**: original uploaded PDFs.
+- User question is embedded and matched against indexed chunks (`top-k` retrieval).
+- Prompt assembly and message shaping live in `prompts.py`.
+- Question shorthand normalization is supported (for example `&` and spaced `/` handling).
+- Ollama is called via `OLLAMA_API_URL` with model from `OLLAMA_MODEL`.
+- Both normal and streaming chat responses are supported in API mode.
 
-## Backend responsibilities (`api.py`)
+### 4) Conversation memory
 
-- Authentication (register/login/me) with JWT.
-- File upload and indexing endpoint.
-- Chat endpoints (normal + streaming SSE).
-- Database table initialization on startup.
-- Retrieval pipeline + Ollama call orchestration.
+- Optional conversational memory is supported for follow-up questions.
+- Controlled by:
+  - `CONTEXT_MEMORY_ENABLED`
+  - `CONTEXT_MEMORY_MAX_MESSAGES`
+- Prior user/assistant turns can be included before the current RAG context message.
+
+## Data and persistence
+
+- **MySQL**: users, documents metadata, chats, and messages (API flow).
+- **Vector store**: Chroma on disk or Qdrant (based on `VECTOR_BACKEND`).
+- **Uploads**: original files under `data/uploads`.
+- **Legacy Streamlit registry**: `data/files.json`.
+
+## API responsibilities (`api.py`)
+
+- Initializes required MySQL tables at startup.
+- Handles authentication with JWT:
+  - register, login, current-user endpoints.
+- Handles file lifecycle:
+  - upload/index, list, PDF fetch, delete.
+- Handles chat lifecycle:
+  - non-stream chat endpoint,
+  - stream chat endpoint,
+  - chat/message listing and assistant message persistence endpoints.
+- Orchestrates retrieval + prompting + Ollama completion.
 
 ## Frontend responsibilities (`frontend/`)
 
-- Login/register UX.
-- Protected chat route.
-- File list and chat history UI.
-- Sends chat requests to FastAPI and renders responses.
-
-## Key decisions in current implementation
-
-- Uses local ChromaDB persistent storage (`data/chroma`) for vector data.
-- Uses local Ollama endpoint for generation (`OLLAMA_API_URL`).
-- Uses one Chroma collection per document hash (`pdf_<sha-prefix>`).
-- Uses chunk overlap to improve retrieval continuity.
+- Provides login/register experience.
+- Enforces protected chat route with token-based access.
+- Manages file list, chat history, and message composer UI.
+- Calls FastAPI endpoints via `frontend/src/api.js` (`VITE_API_URL` configurable).
 
 ## Run modes
 
-- Legacy mode: `streamlit run app.py`
+- Legacy mode:
+  - `streamlit run app.py`
 - Current mode:
   - Backend: `uvicorn api:app --host 0.0.0.0 --port 8000 --reload`
   - Frontend: `cd frontend && yarn dev`
+
+## Key environment variables
+
+- MySQL: `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`
+- Auth: `JWT_SECRET`, `JWT_EXPIRES_MINUTES`
+- LLM: `OLLAMA_API_URL`, `OLLAMA_MODEL`
+- Retrieval memory: `CONTEXT_MEMORY_ENABLED`, `CONTEXT_MEMORY_MAX_MESSAGES`
+- Chunking: `PDF_CHUNK_SIZE`, `PDF_CHUNK_OVERLAP`
+- Vector backend: `VECTOR_BACKEND`, `CHROMA_URL`, `QDRANT_URL`, `QDRANT_API_KEY`

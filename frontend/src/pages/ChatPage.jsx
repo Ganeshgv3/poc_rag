@@ -77,6 +77,63 @@ function DocIconTrash({ className = "", ...rest }) {
   );
 }
 
+function SendPromptIcon({ className = "", ...rest }) {
+  return (
+    <svg
+      className={className}
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.25"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <path d="M12 19V7M8 11l4-4 4 4" />
+    </svg>
+  );
+}
+
+function IconCopy({ className = "", ...rest }) {
+  return (
+    <svg
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function IconStop({ className = "", ...rest }) {
+  return (
+    <svg
+      className={className}
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden
+      {...rest}
+    >
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+    </svg>
+  );
+}
+
 function DocIconEdit({ className = "", ...rest }) {
   return (
     <svg
@@ -99,6 +156,7 @@ function DocIconEdit({ className = "", ...rest }) {
 }
 
 export default function ChatPage() {
+  const navigate = useNavigate();
   const [files, setFiles] = useState([]);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [chats, setChats] = useState([]);
@@ -138,6 +196,10 @@ export default function ChatPage() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const pdfObjectUrlRef = useRef(null);
   const user = useMemo(() => JSON.parse(localStorage.getItem("user") || "{}"), []);
+
+  useEffect(() => {
+    selectedChatIdRef.current = selectedChatId;
+  }, [selectedChatId]);
 
   const animateScrollToBottom = (smooth = true) => {
     const node = messagesContainerRef.current;
@@ -244,6 +306,7 @@ export default function ChatPage() {
     if (!documentId) {
       setChats([]);
       setSelectedChatId(null);
+      selectedChatIdRef.current = null;
       setMessages([]);
       return;
     }
@@ -408,7 +471,7 @@ export default function ChatPage() {
       const body = {
         document_id: selectedDocument.id,
         question: messageText,
-        chat_id: isCreatingNewChat ? null : selectedChatIdRef.current,
+        chat_id: selectedChatIdRef.current ?? null,
       };
       if (replaceUserMessageId != null) {
         body.replace_user_message_id = replaceUserMessageId;
@@ -422,6 +485,13 @@ export default function ChatPage() {
         },
         body: JSON.stringify(body),
       });
+
+      if (response.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        navigate("/login", { replace: true });
+        throw new Error("Session expired. Please sign in again.");
+      }
 
       if (!response.ok || !response.body) {
         throw new Error("Failed to start streaming response.");
@@ -453,8 +523,14 @@ export default function ChatPage() {
               )
             );
           } else if (payload.type === "meta") {
-            if (payload.chat_id) {
-              activeChatId = payload.chat_id;
+            if (payload.chat_id != null) {
+              const cid = Number(payload.chat_id);
+              if (Number.isFinite(cid)) {
+                activeChatId = cid;
+                selectedChatIdRef.current = cid;
+                setSelectedChatId(cid);
+                setIsCreatingNewChat(false);
+              }
             }
           } else if (payload.type === "done") {
             donePayload = payload;
@@ -681,7 +757,7 @@ export default function ChatPage() {
 
   const logout = () => {
     localStorage.clear();
-    navigate("/login");
+    navigate("/login", { replace: true });
   };
 
   const copyToClipboard = async (text) => {
@@ -786,6 +862,7 @@ export default function ChatPage() {
 
   return (
     <div className="chat-shell">
+      <div className="chat-shell-ambient" aria-hidden="true" />
       <aside className="sidebar">
         <div className="sidebar-top chatgpt-nav">
           <button className="nav-action primary" onClick={openNewChat}>
@@ -980,7 +1057,7 @@ export default function ChatPage() {
                       aria-label="Copy answer"
                       title="Copy"
                     >
-                      📋
+                      <IconCopy className="copy-answer-btn-icon" />
                     </button>
                   ) : null}
                   {message.role === "user" &&
@@ -1068,11 +1145,17 @@ export default function ChatPage() {
           />
           {sending ? (
             <button type="button" className="stop-btn" onClick={stopProcess} aria-label="Stop process" title="Stop">
-              ⏹
+              <IconStop className="stop-btn-icon" />
             </button>
           ) : (
-            <button type="submit" disabled={!selectedDocument || sending}>
-              Send
+            <button
+              type="submit"
+              className="composer-send-btn"
+              disabled={!selectedDocument || sending}
+              aria-label="Send prompt"
+              title="Send prompt (Enter)"
+            >
+              <SendPromptIcon className="composer-send-icon" />
             </button>
           )}
         </form>

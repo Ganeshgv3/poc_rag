@@ -19,4 +19,31 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+/** Set from main app once the router exists (avoids importing router into api). */
+let onAuthRequired = null;
+
+export function setAuthRequiredHandler(handler) {
+  onAuthRequired = typeof handler === "function" ? handler : null;
+}
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error.response?.status;
+    if (status === 401) {
+      const hadToken = Boolean(localStorage.getItem("token"));
+      if (hadToken) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        try {
+          onAuthRequired?.();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export default api;

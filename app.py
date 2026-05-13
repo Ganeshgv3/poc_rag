@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import fitz
 import numpy as np
 import requests
 
@@ -17,7 +16,8 @@ from chroma_helpers import (
     save_streamlit_file_registry,
 )
 from env_load import load_dotenv_for_project
-from prompts import build_chat_messages_for_ollama
+from prompts import build_chat_messages_for_ollama, expand_question_shorthand
+from text_chunking import chunk_text, extract_text
 
 
 BASE_DIR = Path(__file__).parent
@@ -60,9 +60,9 @@ def context_memory_enabled() -> bool:
 
 def context_memory_max_messages() -> int:
     try:
-        return max(0, int(os.getenv("CONTEXT_MEMORY_MAX_MESSAGES", "24")))
+        return max(0, int(os.getenv("CONTEXT_MEMORY_MAX_MESSAGES", "40")))
     except ValueError:
-        return 24
+        return 40
 
 
 def session_messages_to_memory(chat_messages: List[Dict]) -> List[Dict[str, str]]:
@@ -103,27 +103,6 @@ def get_chroma_client():
 
 def sha256_bytes(blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()
-
-
-def extract_text(pdf_bytes: bytes) -> str:
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    pages = [page.get_text("text") for page in doc]
-    return "\n".join(pages).strip()
-
-
-def chunk_text(text: str, chunk_size: int = 1100, overlap: int = 180) -> List[str]:
-    chunks = []
-    start = 0
-    text_len = len(text)
-    while start < text_len:
-        end = min(start + chunk_size, text_len)
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        if end >= text_len:
-            break
-        start = end - overlap
-    return chunks
 
 
 def ingest_pdf(
@@ -325,6 +304,8 @@ def answer_binary_from_context(question: str, contexts: List[str]) -> str:
         "of",
         "to",
         "for",
+        "and",
+        "or",
     }
     keywords = [tok for tok in tokens if tok not in stopwords and len(tok) > 1]
     if not keywords:
@@ -531,6 +512,8 @@ if user_question:
     with st.chat_message("user"):
         st.markdown(user_question)
 
+    question_for_rag = expand_question_shorthand(user_question.strip())
+
     with st.chat_message("assistant"):
         try:
             started_at = time.perf_counter()
@@ -551,15 +534,15 @@ if user_question:
                 else:
                     with st.spinner("Generating answer..."):
                         contexts, distances = retrieve_context(
-                            user_question, current_record, embed_model, chroma_client, top_k
+                            question_for_rag, current_record, embed_model, chroma_client, top_k
                         )
                         if st.session_state.stop_requested:
                             answer = "Response cancelled."
                             accuracy_label, accuracy_score = "N/A", 0
                             is_friendly = True
                             st.session_state.stop_requested = False
-                        elif is_binary_question(user_question):
-                            answer = answer_binary_from_context(user_question, contexts)
+                        elif is_binary_question(question_for_rag):
+                            answer = answer_binary_from_context(question_for_rag, contexts)
                         elif not contexts and not reasoning_mode:
                             answer = friendly_not_found_reply(user_question)
                         else:
@@ -571,7 +554,7 @@ if user_question:
                                 if not prior_messages:
                                     prior_messages = None
                             answer = ask_ollama(
-                                user_question,
+                                question_for_rag,
                                 contexts,
                                 st.session_state.selected_model_name.strip(),
                                 max_output_tokens=max_output_tokens,

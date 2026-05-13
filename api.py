@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import fitz
 import jwt
 import numpy as np
 import pymysql
@@ -23,7 +22,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from chroma_helpers import create_chroma_client, delete_named_collection, get_or_create_vector_collection
 from env_load import format_env_search_list, load_dotenv_for_project
-from prompts import build_chat_messages_for_ollama
+from prompts import build_chat_messages_for_ollama, expand_question_shorthand
+from text_chunking import chunk_text, extract_text
 
 
 BASE_DIR = Path(__file__).parent
@@ -39,6 +39,9 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-me-secret")
 JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", "120"))
 
+# Words often introduced by expand_question_shorthand (&, /); exclude from naive yes/no keyword scan.
+_BINARY_KEYWORD_SKIP = frozenset({"and", "or"})
+
 
 def context_memory_enabled() -> bool:
     return (os.getenv("CONTEXT_MEMORY_ENABLED") or "true").strip().lower() not in ("0", "false", "no", "off")
@@ -46,12 +49,13 @@ def context_memory_enabled() -> bool:
 
 def context_memory_max_messages() -> int:
     try:
-        return max(0, int(os.getenv("CONTEXT_MEMORY_MAX_MESSAGES", "24")))
+        return max(0, int(os.getenv("CONTEXT_MEMORY_MAX_MESSAGES", "40")))
     except ValueError:
         return 24
 
 
 def fetch_prior_messages(cur, chat_id: int, *, exclude_last_user: bool) -> List[Dict[str, str]]:
+    """Load recent DB messages for Ollama. Chronological order (oldest first within the window)."""
     limit = context_memory_max_messages()
     if limit <= 0 or not chat_id:
         return []
@@ -60,6 +64,8 @@ def fetch_prior_messages(cur, chat_id: int, *, exclude_last_user: bool) -> List[
         (chat_id, limit),
     )
     rows = list(reversed(cur.fetchall() or []))
+    # Stream path inserts the current user row before this fetch; strip it so the model
+    # does not see the same question twice (it is also inside the final RAG user blob).
     if exclude_last_user and rows and rows[-1].get("role") == "user":
         rows = rows[:-1]
     out: List[Dict[str, str]] = []
@@ -196,27 +202,6 @@ def get_chroma_client():
 
 def sha256_bytes(blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()
-
-
-def extract_text(pdf_bytes: bytes) -> str:
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    pages = [page.get_text("text") for page in doc]
-    return "\n".join(pages).strip()
-
-
-def chunk_text(text: str, chunk_size: int = 1100, overlap: int = 180) -> List[str]:
-    chunks = []
-    start = 0
-    text_len = len(text)
-    while start < text_len:
-        end = min(start + chunk_size, text_len)
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        if end >= text_len:
-            break
-        start = end - overlap
-    return chunks
 
 
 def create_token(user: Dict) -> str:
@@ -694,6 +679,7 @@ def delete_file(document_id: int, user_id: int = Depends(auth_user)):
 @app.post("/api/chat")
 def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
     question = payload.question.strip()
+    question_for_rag = expand_question_shorthand(question)
     document_id = payload.document_id
     chat_id = payload.chat_id
     if not question or not document_id:
@@ -731,20 +717,24 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 prior_messages = fetch_prior_messages(cur, chat_id, exclude_last_user=False)
 
             started_at = time.perf_counter()
-            contexts, distances = retrieve_context(question, doc["collection_name"], top_k=3)
+            contexts, distances = retrieve_context(question_for_rag, doc["collection_name"], top_k=3)
             if re.match(
                 r"^(is|are|was|were|do|does|did|can|could|has|have|had|will|would|should)\b",
-                question.lower(),
+                question_for_rag.lower(),
             ):
                 text = " ".join(contexts).lower()
-                keywords = [t for t in re.findall(r"[a-z0-9\+\#\.]+", question.lower()) if len(t) > 2]
+                keywords = [
+                    t
+                    for t in re.findall(r"[a-z0-9\+\#\.]+", question_for_rag.lower())
+                    if len(t) > 2 and t not in _BINARY_KEYWORD_SKIP
+                ]
                 answer = "Yes." if any(k in text for k in keywords) else "No."
             elif is_small_talk(question):
                 answer = small_talk_reply(question)
             elif not contexts:
                 answer = friendly_not_found_reply(question)
             else:
-                answer = ask_ollama(question, contexts, OLLAMA_MODEL, prior_messages=prior_messages or None)
+                answer = ask_ollama(question_for_rag, contexts, OLLAMA_MODEL, prior_messages=prior_messages or None)
             answer = clean_answer_text(answer)
 
             cur.execute(
@@ -784,6 +774,7 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
 @app.post("/api/chat/stream")
 def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
     question = payload.question.strip()
+    question_for_rag = expand_question_shorthand(question)
     document_id = payload.document_id
     chat_id = payload.chat_id
     if not question or not document_id:
@@ -861,7 +852,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
             prior_messages = fetch_prior_messages(cur, chat_id, exclude_last_user=True)
 
     try:
-        contexts, distances = retrieve_context(question, doc["collection_name"], top_k=3)
+        contexts, distances = retrieve_context(question_for_rag, doc["collection_name"], top_k=3)
     except Exception:
         conn.close()
         raise
@@ -872,10 +863,14 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
             yield sse_event({"type": "meta", "chat_id": chat_id})
             if re.match(
                 r"^(is|are|was|were|do|does|did|can|could|has|have|had|will|would|should)\b",
-                question.lower(),
+                question_for_rag.lower(),
             ):
                 text = " ".join(contexts).lower()
-                keywords = [t for t in re.findall(r"[a-z0-9\+\#\.]+", question.lower()) if len(t) > 2]
+                keywords = [
+                    t
+                    for t in re.findall(r"[a-z0-9\+\#\.]+", question_for_rag.lower())
+                    if len(t) > 2 and t not in _BINARY_KEYWORD_SKIP
+                ]
                 answer = "Yes." if any(k in text for k in keywords) else "No."
                 answer = clean_answer_text(answer)
                 for part in chunk_text_for_stream(answer):
@@ -893,7 +888,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                     yield sse_event({"type": "token", "delta": part})
             else:
                 for delta in stream_ollama_answer(
-                    question, contexts, OLLAMA_MODEL, prior_messages=prior_messages or None
+                    question_for_rag, contexts, OLLAMA_MODEL, prior_messages=prior_messages or None
                 ):
                     if not delta:
                         continue
