@@ -11,7 +11,6 @@ import httpx
 import jwt
 import numpy as np
 import pymysql
-import requests
 import uvicorn
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,8 +22,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from chroma_helpers import create_chroma_client, delete_named_collection, get_or_create_vector_collection
 from env_load import format_env_search_list, load_dotenv_for_project
-from hybrid_retrieval import retrieve_with_hybrid
-from prompts import build_chat_messages_for_ollama, expand_question_shorthand
+from rag_pipeline import run_pdf_rag_sync, stream_pdf_rag_llm_tokens
+from rag_routing import clean_answer_text
 from text_chunking import chunk_text, extract_text
 
 
@@ -40,9 +39,6 @@ OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-me-secret")
 JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", "120"))
-
-# Words often introduced by expand_question_shorthand (&, /); exclude from naive yes/no keyword scan.
-_BINARY_KEYWORD_SKIP = frozenset({"and", "or"})
 
 
 def context_memory_enabled() -> bool:
@@ -279,62 +275,6 @@ class ChatPatchPayload(BaseModel):
     archived: Optional[bool] = None
 
 
-def ask_ollama(
-    question: str,
-    contexts: List[str],
-    model_name: str,
-    prior_messages: Optional[List[Dict[str, str]]] = None,
-) -> str:
-    messages = build_chat_messages_for_ollama(
-        question, contexts, allow_inference=True, prior_messages=prior_messages
-    )
-    response = requests.post(
-        f"{OLLAMA_API_URL}/api/chat",
-        json={
-            "model": model_name,
-            "messages": messages,
-            "stream": False,
-            "options": {"temperature": 0.2, "num_predict": 220},
-        },
-        timeout=120,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    message = payload.get("message") or {}
-    return str(message.get("content") or payload.get("response") or "").strip()
-
-
-def stream_ollama_answer(
-    question: str,
-    contexts: List[str],
-    model_name: str,
-    prior_messages: Optional[List[Dict[str, str]]] = None,
-):
-    messages = build_chat_messages_for_ollama(
-        question, contexts, allow_inference=True, prior_messages=prior_messages
-    )
-    response = requests.post(
-        f"{OLLAMA_API_URL}/api/chat",
-        json={
-            "model": model_name,
-            "messages": messages,
-            "stream": True,
-            "options": {"temperature": 0.2, "num_predict": 220},
-        },
-        stream=True,
-        timeout=180,
-    )
-    response.raise_for_status()
-    for raw_line in response.iter_lines(decode_unicode=True):
-        if not raw_line:
-            continue
-        chunk = json.loads(raw_line)
-        message = chunk.get("message") or {}
-        delta = str(message.get("content") or "")
-        if delta:
-            yield delta
-
-
 def sse_event(payload: Dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
@@ -344,86 +284,6 @@ def chunk_text_for_stream(text: str, chunk_size: int = 12) -> List[str]:
     if not cleaned:
         return []
     return [cleaned[i : i + chunk_size] for i in range(0, len(cleaned), chunk_size)]
-
-
-def is_small_talk(question: str) -> bool:
-    lowered = re.sub(r"[^a-z0-9\s]", " ", question.lower()).strip()
-    if not lowered:
-        return False
-    compact = " ".join(lowered.split())
-    exact_phrases = {
-        "hi",
-        "hello",
-        "hey",
-        "yo",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "how are you",
-        "thanks",
-        "thank you",
-        "thx",
-        "ok",
-        "okay",
-        "cool",
-        "nice",
-        "great",
-    }
-    if compact in exact_phrases:
-        return True
-    starts_with_phrases = (
-        "hi ",
-        "hello ",
-        "hey ",
-        "thanks ",
-        "thank you ",
-        "how are you ",
-    )
-    return compact.startswith(starts_with_phrases)
-
-
-def small_talk_reply(question: str) -> str:
-    compact = " ".join(re.sub(r"[^a-z0-9\s]", " ", question.lower()).split())
-    if compact.startswith(("thanks", "thank you", "thx")):
-        return "You are welcome. I am here whenever you want to ask something about your PDF."
-    if compact.startswith("how are you"):
-        return "I am doing great. Ready to help you explore your PDF."
-    if compact in {"ok", "okay", "cool", "nice", "great"}:
-        return "Great. Ask me any detail you want from the selected PDF."
-    return "Hi there. I am ready to help. Ask me anything from your selected PDF."
-
-
-NOT_FOUND_REPLIES = [
-    "I could not spot that detail in the selected PDF yet. Please try a more specific question.",
-    "I could not find that in this PDF. If you want, ask with a related keyword and I will check again.",
-    "That exact detail is not visible in the selected PDF right now. Try rephrasing and I can re-check.",
-]
-
-
-def friendly_not_found_reply(question: str) -> str:
-    seed = abs(hash((question or "").strip().lower()))
-    return NOT_FOUND_REPLIES[seed % len(NOT_FOUND_REPLIES)]
-
-
-def clean_answer_text(answer: str) -> str:
-    if not answer:
-        return "I am here to help. Could you please rephrase your question?"
-    text = answer
-    # Remove common markdown emphasis artifacts for plain readable UI output.
-    text = text.replace("**", "").replace("__", "").replace("`", "")
-    # Remove orphan/standalone bullet symbols that sometimes appear from LLM formatting.
-    text = re.sub(r"(?m)^\s*[•◦○●▪▫]\s*$", "", text)
-    # Normalize bullet-prefixed lines into plain sentences.
-    text = re.sub(r"(?m)^\s*[-*•◦○●▪▫]\s+", "", text)
-    # Normalize excessive spacing/newlines.
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    # Remove stray spaces around punctuation.
-    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
-    cleaned = text.strip()
-    if not cleaned:
-        return "I am here to help. Could you please rephrase your question?"
-    return cleaned
 
 
 def build_chat_title(questions: List[str]) -> str:
@@ -530,18 +390,6 @@ def _vector_store_unreachable_detail(exc: BaseException) -> Optional[str]:
         if isinstance(args0, BaseException) and args0 is not e.__cause__:
             stack.append(args0)
     return None
-
-
-def retrieve_context(query: str, collection_name: str, top_k: int = 3) -> Tuple[List[str], List[float]]:
-    model = get_embedding_model()
-    try:
-        collection = get_or_create_vector_collection(get_chroma_client(), collection_name)
-        return retrieve_with_hybrid(query, collection, model, top_k)
-    except Exception as exc:
-        detail = _vector_store_unreachable_detail(exc)
-        if detail:
-            raise HTTPException(status_code=503, detail=detail) from exc
-        raise
 
 
 @app.post("/api/auth/register")
@@ -689,6 +537,18 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(auth_
                 (user_id, original_name, stored_name, str(file_path), digest, collection_name, len(chunks)),
             )
             document_id = cur.lastrowid
+            mysql_db = os.getenv("MYSQL_DATABASE", "rag_app")
+            vector_backend = (os.getenv("VECTOR_BACKEND") or "chroma").strip()
+            print(
+                "\n=== PDF uploaded & indexed ===",
+                f"File: {original_name}",
+                f"Chunked into {len(chunks)} chunks; embeddings stored in vector store",
+                f"MySQL database: {mysql_db}  (documents.id={document_id})",
+                f"Vector collection name: {collection_name}  (VECTOR_BACKEND={vector_backend})",
+                "================================\n",
+                sep="\n",
+                flush=True,
+            )
         return {"message": "Indexed successfully.", "document_id": document_id}
     finally:
         conn.close()
@@ -734,7 +594,6 @@ def delete_file(document_id: int, user_id: int = Depends(auth_user)):
 @app.post("/api/chat")
 def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
     question = payload.question.strip()
-    question_for_rag = expand_question_shorthand(question)
     document_id = payload.document_id
     chat_id = payload.chat_id
     if not question or not document_id:
@@ -772,25 +631,38 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 prior_messages = fetch_prior_messages(cur, chat_id, exclude_last_user=False)
 
             started_at = time.perf_counter()
-            contexts, distances = retrieve_context(question_for_rag, doc["collection_name"], top_k=3)
-            if re.match(
-                r"^(is|are|was|were|do|does|did|can|could|has|have|had|will|would|should)\b",
-                question_for_rag.lower(),
-            ):
-                text = " ".join(contexts).lower()
-                keywords = [
-                    t
-                    for t in re.findall(r"[a-z0-9\+\#\.]+", question_for_rag.lower())
-                    if len(t) > 2 and t not in _BINARY_KEYWORD_SKIP
-                ]
-                answer = "Yes." if any(k in text for k in keywords) else "No."
-            elif is_small_talk(question):
-                answer = small_talk_reply(question)
-            elif not contexts:
-                answer = friendly_not_found_reply(question)
-            else:
-                answer = ask_ollama(question_for_rag, contexts, OLLAMA_MODEL, prior_messages=prior_messages or None)
+            try:
+                answer, contexts, distances = run_pdf_rag_sync(
+                    question=question,
+                    collection_name=doc["collection_name"],
+                    embedding_model=get_embedding_model(),
+                    chroma_client=get_chroma_client(),
+                    ollama_base_url=OLLAMA_API_URL,
+                    ollama_model=OLLAMA_MODEL,
+                    prior_messages=prior_messages or None,
+                    top_k=3,
+                    temperature=0.2,
+                    num_predict=220,
+                    allow_inference=True,
+                )
+            except Exception as exc:
+                detail = _vector_store_unreachable_detail(exc)
+                if detail:
+                    raise HTTPException(status_code=503, detail=detail) from exc
+                raise
             answer = clean_answer_text(answer)
+            mysql_db = os.getenv("MYSQL_DATABASE", "rag_app")
+            print(
+                "\n--- Question & answer (POST /api/chat) ---",
+                f"MySQL database: {mysql_db}",
+                f"Vector collection: {doc['collection_name']}",
+                f"document_id={document_id}  chat_id={chat_id}",
+                f"Question: {question}",
+                f"Answer: {answer}",
+                "-----------------------------------------\n",
+                sep="\n",
+                flush=True,
+            )
 
             cur.execute(
                 "INSERT INTO messages (chat_id, role, content) VALUES (%s, 'user', %s)",
@@ -829,7 +701,6 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
 @app.post("/api/chat/stream")
 def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
     question = payload.question.strip()
-    question_for_rag = expand_question_shorthand(question)
     document_id = payload.document_id
     chat_id = payload.chat_id
     if not question or not document_id:
@@ -837,6 +708,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
 
     conn = db_conn()
     replace_assistant_message_id: Optional[int] = None
+    replace_id: Optional[int] = payload.replace_user_message_id
     with conn.cursor() as cur:
         cur.execute(
             "SELECT id, collection_name FROM documents WHERE id=%s AND user_id=%s",
@@ -864,7 +736,6 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
             )
             chat_id = cur.lastrowid
 
-        replace_id = payload.replace_user_message_id
         if replace_id:
             if not chat_id:
                 raise HTTPException(status_code=400, detail="chat_id is required when editing a message.")
@@ -909,50 +780,55 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
             prior_messages = fetch_prior_messages(cur, chat_id, exclude_last_user=True)
 
     try:
-        contexts, distances = retrieve_context(question_for_rag, doc["collection_name"], top_k=3)
-    except Exception:
+        contexts, distances, prefilled, token_iter = stream_pdf_rag_llm_tokens(
+            question=question,
+            collection_name=doc["collection_name"],
+            embedding_model=get_embedding_model(),
+            chroma_client=get_chroma_client(),
+            ollama_base_url=OLLAMA_API_URL,
+            ollama_model=OLLAMA_MODEL,
+            prior_messages=prior_messages or None,
+            top_k=3,
+            temperature=0.2,
+            num_predict=220,
+            allow_inference=True,
+        )
+    except Exception as exc:
         conn.close()
+        detail = _vector_store_unreachable_detail(exc)
+        if detail:
+            raise HTTPException(status_code=503, detail=detail) from exc
         raise
 
     def event_stream():
         answer_parts: List[str] = []
         try:
             yield sse_event({"type": "meta", "chat_id": chat_id})
-            if re.match(
-                r"^(is|are|was|were|do|does|did|can|could|has|have|had|will|would|should)\b",
-                question_for_rag.lower(),
-            ):
-                text = " ".join(contexts).lower()
-                keywords = [
-                    t
-                    for t in re.findall(r"[a-z0-9\+\#\.]+", question_for_rag.lower())
-                    if len(t) > 2 and t not in _BINARY_KEYWORD_SKIP
-                ]
-                answer = "Yes." if any(k in text for k in keywords) else "No."
-                answer = clean_answer_text(answer)
-                for part in chunk_text_for_stream(answer):
-                    answer_parts.append(part)
-                    yield sse_event({"type": "token", "delta": part})
-            elif is_small_talk(question):
-                answer = clean_answer_text(small_talk_reply(question))
-                for part in chunk_text_for_stream(answer):
-                    answer_parts.append(part)
-                    yield sse_event({"type": "token", "delta": part})
-            elif not contexts:
-                answer = clean_answer_text(friendly_not_found_reply(question))
+            if prefilled:
+                answer = clean_answer_text(prefilled)
                 for part in chunk_text_for_stream(answer):
                     answer_parts.append(part)
                     yield sse_event({"type": "token", "delta": part})
             else:
-                for delta in stream_ollama_answer(
-                    question_for_rag, contexts, OLLAMA_MODEL, prior_messages=prior_messages or None
-                ):
+                for delta in token_iter:
                     if not delta:
                         continue
                     answer_parts.append(delta)
                     yield sse_event({"type": "token", "delta": delta})
 
             final_answer = clean_answer_text("".join(answer_parts))
+            mysql_db = os.getenv("MYSQL_DATABASE", "rag_app")
+            print(
+                "\n--- Question & answer (POST /api/chat/stream) ---",
+                f"MySQL database: {mysql_db}",
+                f"Vector collection: {doc['collection_name']}",
+                f"document_id={document_id}  chat_id={chat_id}",
+                f"Question: {question}",
+                f"Answer: {final_answer}",
+                "--------------------------------------------------\n",
+                sep="\n",
+                flush=True,
+            )
             with conn.cursor() as cur:
                 if replace_id and replace_assistant_message_id:
                     cur.execute(

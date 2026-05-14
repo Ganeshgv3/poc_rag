@@ -16,8 +16,8 @@ from chroma_helpers import (
     save_streamlit_file_registry,
 )
 from env_load import load_dotenv_for_project
-from hybrid_retrieval import retrieve_with_hybrid
-from prompts import build_chat_messages_for_ollama, expand_question_shorthand
+from rag_pipeline import run_pdf_rag_sync
+from rag_routing import NOT_FOUND_REPLIES, is_small_talk
 from text_chunking import chunk_text, extract_text
 
 
@@ -47,11 +47,6 @@ FALLBACK_MODELS = [
     "llama3.2:latest",
     "kimi-k2.6:cloud",
     "glm-5:cloud",
-]
-NOT_FOUND_REPLIES = [
-    "I could not spot that detail in the selected PDF yet. Please try a more specific question.",
-    "I could not find that in this PDF. If you want, ask with a related keyword and I will check again.",
-    "That exact detail is not visible in the selected PDF right now. Try rephrasing and I can re-check.",
 ]
 
 
@@ -167,18 +162,18 @@ def ingest_pdf(
     )
     save_streamlit_file_registry(client, records)
     emit_progress(100, "Upload complete.")
+    vector_backend = (os.getenv("VECTOR_BACKEND") or "chroma").strip()
+    print(
+        "\n=== PDF uploaded & indexed (Streamlit) ===",
+        f"File: {pdf_name}",
+        f"Chunked into {len(chunks)} chunks; embeddings stored in vector store",
+        f"Vector collection name: {collection_name}  (VECTOR_BACKEND={vector_backend})",
+        "(MySQL not used in Streamlit mode; registry saved to vector store / files.json)",
+        "==========================================\n",
+        sep="\n",
+        flush=True,
+    )
     return True, f"Indexed {pdf_name} with {len(chunks)} chunks."
-
-
-def retrieve_context(
-    query: str,
-    file_record: Dict,
-    model: SentenceTransformer,
-    client,
-    top_k: int,
-) -> Tuple[List[str], List[float]]:
-    collection = get_or_create_vector_collection(client, file_record["collection_name"])
-    return retrieve_with_hybrid(query, collection, model, top_k)
 
 
 def accuracy_from_distances(distances: List[float]) -> Tuple[str, int]:
@@ -209,6 +204,11 @@ def support_score_from_context(answer: str, contexts: List[str]) -> int:
     return int(max(0, min(100, ratio * 100)))
 
 
+def is_not_found_answer(answer: str) -> bool:
+    normalized = (answer or "").strip().lower()
+    return any(reply.lower() == normalized for reply in NOT_FOUND_REPLIES)
+
+
 def accuracy_from_signals(answer: str, contexts: List[str], distances: List[float]) -> Tuple[str, int]:
     if is_not_found_answer(answer):
         return "Low", 0
@@ -234,139 +234,6 @@ def get_available_models() -> List[str]:
     except Exception:  # pylint: disable=broad-except
         pass
     return FALLBACK_MODELS.copy()
-
-
-def is_binary_question(question: str) -> bool:
-    q = question.strip().lower()
-    prefixes = (
-        "is ",
-        "are ",
-        "was ",
-        "were ",
-        "do ",
-        "does ",
-        "did ",
-        "can ",
-        "could ",
-        "has ",
-        "have ",
-        "had ",
-        "will ",
-        "would ",
-        "should ",
-    )
-    return q.startswith(prefixes)
-
-
-def answer_binary_from_context(question: str, contexts: List[str]) -> str:
-    combined = " ".join(contexts).lower()
-    tokens = re.findall(r"[a-z0-9\+\#\.]+", question.lower())
-    stopwords = {
-        "is",
-        "are",
-        "was",
-        "were",
-        "do",
-        "does",
-        "did",
-        "can",
-        "could",
-        "has",
-        "have",
-        "had",
-        "will",
-        "would",
-        "should",
-        "he",
-        "she",
-        "they",
-        "it",
-        "i",
-        "we",
-        "you",
-        "the",
-        "a",
-        "an",
-        "know",
-        "knows",
-        "with",
-        "in",
-        "of",
-        "to",
-        "for",
-        "and",
-        "or",
-    }
-    keywords = [tok for tok in tokens if tok not in stopwords and len(tok) > 1]
-    if not keywords:
-        return "No."
-    matched = sum(1 for tok in keywords if tok in combined)
-    return "Yes." if matched > 0 else "No."
-
-
-def friendly_reply(message: str) -> str | None:
-    cleaned = re.sub(r"[^\w\s]", "", message.lower()).strip()
-    if cleaned in {"hi", "hii", "hiii", "hello", "hey", "yo"} or cleaned.startswith(("hi ", "hello ", "hey ")):
-        return "Hey! How can I help you with your selected PDF?"
-    if cleaned in {"good morning", "good afternoon", "good evening"}:
-        return "Hello! Ask me anything about your selected PDF."
-    if cleaned in {"thanks", "thank you", "thx"} or cleaned.startswith(("thanks ", "thank you ")):
-        return "You're welcome! Want me to pull any detail from the PDF?"
-    if cleaned.startswith("how are you"):
-        return "I am doing great. Ready to help you explore your PDF."
-    if cleaned in {"ok", "okay", "cool", "nice", "great"}:
-        return "Great. Ask your next question whenever you're ready."
-    return None
-
-
-def friendly_not_found_reply(question: str) -> str:
-    seed = abs(hash((question or "").strip().lower()))
-    return NOT_FOUND_REPLIES[seed % len(NOT_FOUND_REPLIES)]
-
-
-def is_not_found_answer(answer: str) -> bool:
-    normalized = (answer or "").strip().lower()
-    return any(reply.lower() == normalized for reply in NOT_FOUND_REPLIES)
-
-
-def ask_ollama(
-    question: str,
-    contexts: List[str],
-    model_name: str,
-    max_output_tokens: int,
-    temperature: float,
-    allow_inference: bool,
-    prior_messages: Optional[List[Dict[str, str]]] = None,
-) -> str:
-    messages = build_chat_messages_for_ollama(
-        question, contexts, allow_inference, prior_messages=prior_messages
-    )
-    response = requests.post(
-        f"{OLLAMA_API_URL}/api/chat",
-        json={
-            "model": model_name,
-            "messages": messages,
-            "stream": False,
-            "options": {
-                "num_predict": max_output_tokens,
-                "temperature": temperature,
-            },
-        },
-        timeout=120,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    message = payload.get("message")
-    answer = ""
-    if isinstance(message, dict):
-        answer = str(message.get("content", "")).strip()
-    if not answer:
-        answer = str(payload.get("response", "")).strip()
-    if not answer:
-        if allow_inference:
-            return "Inferred: I do not see enough retrieved context, but based on the question I cannot provide a reliable document-grounded answer."
-        return "I could not generate a final answer for this question. Try lowering top-k to 2-3 or switch to `llama3.1:8b`."
-    return answer
 
 
 if "messages_by_file" not in st.session_state:
@@ -502,59 +369,54 @@ if user_question:
     with st.chat_message("user"):
         st.markdown(user_question)
 
-    question_for_rag = expand_question_shorthand(user_question.strip())
-
     with st.chat_message("assistant"):
         try:
             started_at = time.perf_counter()
             contexts: List[str] = []
             distances: List[float] = []
-            is_friendly = False
-            maybe_friendly = friendly_reply(user_question)
-            if maybe_friendly is not None:
-                answer = maybe_friendly
-                accuracy_label, accuracy_score = "N/A", 0
+            accuracy_label, accuracy_score = "N/A", 0
+            if st.session_state.stop_requested:
+                answer = "Response cancelled."
                 is_friendly = True
+                st.session_state.stop_requested = False
             else:
-                if st.session_state.stop_requested:
-                    answer = "Response cancelled."
-                    accuracy_label, accuracy_score = "N/A", 0
-                    is_friendly = True
-                    st.session_state.stop_requested = False
-                else:
-                    with st.spinner("Generating answer..."):
-                        contexts, distances = retrieve_context(
-                            question_for_rag, current_record, embed_model, chroma_client, top_k
+                with st.spinner("Generating answer..."):
+                    prior_messages = None
+                    if context_memory_enabled():
+                        prior_messages = session_messages_to_memory(
+                            st.session_state.messages_by_file[chat_key][:-1]
                         )
-                        if st.session_state.stop_requested:
-                            answer = "Response cancelled."
-                            accuracy_label, accuracy_score = "N/A", 0
-                            is_friendly = True
-                            st.session_state.stop_requested = False
-                        elif is_binary_question(question_for_rag):
-                            answer = answer_binary_from_context(question_for_rag, contexts)
-                        elif not contexts and not reasoning_mode:
-                            answer = friendly_not_found_reply(user_question)
-                        else:
+                        if not prior_messages:
                             prior_messages = None
-                            if context_memory_enabled():
-                                prior_messages = session_messages_to_memory(
-                                    st.session_state.messages_by_file[chat_key][:-1]
-                                )
-                                if not prior_messages:
-                                    prior_messages = None
-                            answer = ask_ollama(
-                                question_for_rag,
-                                contexts,
-                                st.session_state.selected_model_name.strip(),
-                                max_output_tokens=max_output_tokens,
-                                temperature=temperature,
-                                allow_inference=reasoning_mode,
-                                prior_messages=prior_messages,
-                            )
-                    if not is_friendly:
-                        accuracy_label, accuracy_score = accuracy_from_signals(answer, contexts, distances)
+                    answer, contexts, distances = run_pdf_rag_sync(
+                        question=user_question.strip(),
+                        collection_name=current_record["collection_name"],
+                        embedding_model=embed_model,
+                        chroma_client=chroma_client,
+                        ollama_base_url=OLLAMA_API_URL,
+                        ollama_model=st.session_state.selected_model_name.strip(),
+                        prior_messages=prior_messages,
+                        top_k=top_k,
+                        temperature=temperature,
+                        num_predict=max_output_tokens,
+                        allow_inference=reasoning_mode,
+                    )
+                is_friendly = is_small_talk(user_question.strip())
+                if not is_friendly:
+                    accuracy_label, accuracy_score = accuracy_from_signals(answer, contexts, distances)
             elapsed_seconds = time.perf_counter() - started_at
+
+            vector_backend = (os.getenv("VECTOR_BACKEND") or "chroma").strip()
+            print(
+                "\n--- Question & answer (Streamlit) ---",
+                f"Vector collection: {current_record['collection_name']}  (VECTOR_BACKEND={vector_backend})",
+                f"PDF: {current_record.get('filename', '')}",
+                f"Question: {user_question.strip()}",
+                f"Answer: {answer}",
+                "---------------------------------------\n",
+                sep="\n",
+                flush=True,
+            )
 
             st.markdown(answer)
             if not is_friendly:

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
@@ -94,6 +94,27 @@ function SendPromptIcon({ className = "", ...rest }) {
       {...rest}
     >
       <path d="M12 19V7M8 11l4-4 4 4" />
+    </svg>
+  );
+}
+
+function IconClose({ className = "", ...rest }) {
+  return (
+    <svg
+      className={className}
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
   );
 }
@@ -261,6 +282,7 @@ export default function ChatPage() {
   const sidebarScrollIdleTimerRef = useRef(null);
   const questionInputRef = useRef(null);
   const renameChatInputRef = useRef(null);
+  const userMessageEditInputRef = useRef(null);
   const chatOverflowMenuRef = useRef(null);
   const messagesEndRef = useRef(null);
   const toastTimerRef = useRef(null);
@@ -282,6 +304,18 @@ export default function ChatPage() {
       renameChatInputRef.current?.select();
     });
   }, [editingSidebarChatId]);
+
+  useLayoutEffect(() => {
+    if (editingUserMessageId == null) return;
+    const el = userMessageEditInputRef.current;
+    if (!el) return;
+    const syncScroll = () => {
+      el.scrollTop = 0;
+      el.scrollLeft = 0;
+    };
+    syncScroll();
+    requestAnimationFrame(syncScroll);
+  }, [editingUserMessageId]);
 
   useEffect(() => {
     setEditingSidebarChatId(null);
@@ -1365,8 +1399,25 @@ export default function ChatPage() {
                   String(message?.content || "").trim().length > 0 || isStreamPlaceholderMessage(message)
               )
               .map((message, index) => (
-              <div key={message.id || index} className={`message ${message.role}`}>
-                <div className={`bubble-wrap ${message.role === "user" ? "bubble-wrap--user-hover" : ""}`}>
+              <div
+                key={message.id || index}
+                className={[
+                  "message",
+                  message.role,
+                  message.role === "user" && editingUserMessageId === message.id ? "message-user--editing" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
+                <div
+                  className={[
+                    "bubble-wrap",
+                    message.role === "user" ? "bubble-wrap--user-hover" : "",
+                    message.role === "user" && editingUserMessageId === message.id ? "bubble-wrap--user-editing" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                >
                   {message.role === "assistant" && String(message.content || "").trim().length > 0 ? (
                     <button
                       type="button"
@@ -1398,27 +1449,55 @@ export default function ChatPage() {
                     </button>
                   ) : null}
                   {message.role === "user" && editingUserMessageId === message.id ? (
-                    <div className="user-message-editor">
-                      <textarea
-                        className="user-message-editor-input"
-                        value={editingDraft}
-                        onChange={(e) => setEditingDraft(e.target.value)}
-                        rows={3}
-                        autoFocus
-                      />
-                      <div className="user-message-editor-actions">
-                        <button
-                          type="button"
-                          className="user-message-save-btn"
-                          onClick={() => submitEditedUserMessage(message.id)}
-                        >
-                          Save & re-run
-                        </button>
-                        <button type="button" className="user-message-cancel-btn" onClick={cancelEditUserMessage}>
-                          Cancel
-                        </button>
+                    <form
+                      className="user-message-editor"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        submitEditedUserMessage(message.id);
+                      }}
+                    >
+                      <div className="user-message-editor-row">
+                        <textarea
+                          ref={userMessageEditInputRef}
+                          className="user-message-editor-input"
+                          value={editingDraft}
+                          onChange={(e) => setEditingDraft(e.target.value)}
+                          rows={2}
+                          autoFocus
+                          aria-label="Edit your question"
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              cancelEditUserMessage();
+                              return;
+                            }
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              submitEditedUserMessage(message.id);
+                            }
+                          }}
+                        />
+                        <div className="user-message-editor-toolbar" role="group" aria-label="Edit actions">
+                          <button
+                            type="submit"
+                            className="user-message-icon-btn user-message-icon-btn--submit"
+                            title="Save and re-run (Enter). Shift+Enter for a new line."
+                            aria-label="Save and re-run"
+                          >
+                            <SendPromptIcon className="user-message-editor-toolbar-icon" />
+                          </button>
+                          <button
+                            type="button"
+                            className="user-message-icon-btn user-message-icon-btn--cancel"
+                            onClick={cancelEditUserMessage}
+                            title="Cancel editing"
+                            aria-label="Cancel editing"
+                          >
+                            <IconClose className="user-message-editor-toolbar-icon" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    </form>
                   ) : message.role === "assistant" &&
                     isStreamPlaceholderMessage(message) &&
                     !String(message.content || "").trim() ? (
