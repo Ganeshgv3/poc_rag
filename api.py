@@ -23,6 +23,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from chroma_helpers import create_chroma_client, delete_named_collection, get_or_create_vector_collection
 from env_load import format_env_search_list, load_dotenv_for_project
+from hybrid_retrieval import retrieve_with_hybrid
 from prompts import build_chat_messages_for_ollama, expand_question_shorthand
 from text_chunking import chunk_text, extract_text
 
@@ -533,23 +534,14 @@ def _vector_store_unreachable_detail(exc: BaseException) -> Optional[str]:
 
 def retrieve_context(query: str, collection_name: str, top_k: int = 3) -> Tuple[List[str], List[float]]:
     model = get_embedding_model()
-    query_embedding = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
-    query_vector = np.asarray(query_embedding, dtype=np.float32).tolist()[0]
     try:
         collection = get_or_create_vector_collection(get_chroma_client(), collection_name)
-        result = collection.query(
-            query_embeddings=[query_vector],
-            n_results=top_k,
-            include=["documents", "distances"],
-        )
+        return retrieve_with_hybrid(query, collection, model, top_k)
     except Exception as exc:
         detail = _vector_store_unreachable_detail(exc)
         if detail:
             raise HTTPException(status_code=503, detail=detail) from exc
         raise
-    docs = result.get("documents", [[]])[0] or []
-    distances = result.get("distances", [[]])[0] or []
-    return docs, distances
 
 
 @app.post("/api/auth/register")

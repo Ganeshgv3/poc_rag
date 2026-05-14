@@ -239,11 +239,13 @@ class QdrantCollectionAdapter:
         hits = resp.points
         docs: List[str] = []
         distances: List[float] = []
+        ids_out: List[str] = []
         metas: List[Dict[str, Any]] = []
         for h in hits:
             payload = dict(h.payload or {})
             text = payload.pop(DOC_PAYLOAD_KEY, "")
             docs.append(str(text))
+            ids_out.append(str(h.id))
             # Chroma cosine distance: lower is more similar. Qdrant cosine score: higher is more similar.
             score = float(h.score)
             distances.append(max(0.0, min(2.0, 1.0 - score)))
@@ -253,15 +255,19 @@ class QdrantCollectionAdapter:
             out["documents"] = [docs]
         if "distances" in include:
             out["distances"] = [distances]
+        if "ids" in include:
+            out["ids"] = [ids_out]
         if "metadatas" in include:
             out["metadatas"] = [metas]
         return out
 
     def get(self, include: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Minimal Chroma-compatible surface for registry code paths (unused for Qdrant registry)."""
-        _ = include
+        """Chroma-compatible scroll: ids, metadatas, and optionally document text from payload."""
+        include = include or ["metadatas"]
+        want_docs = "documents" in include
         offset = None
-        ids: List[int] = []
+        ids: List[str] = []
+        documents: List[str] = []
         metadatas: List[Dict[str, Any]] = []
         while True:
             points, offset = self._client.scroll(
@@ -272,13 +278,18 @@ class QdrantCollectionAdapter:
                 with_vectors=False,
             )
             for p in points:
-                ids.append(int(p.id))  # type: ignore[arg-type]
+                ids.append(str(p.id))
                 payload = dict(p.payload or {})
+                if want_docs:
+                    documents.append(str(payload.get(DOC_PAYLOAD_KEY, "")))
                 payload.pop(DOC_PAYLOAD_KEY, None)
                 metadatas.append(payload)
             if offset is None:
                 break
-        return {"ids": ids, "metadatas": metadatas}
+        out: Dict[str, Any] = {"ids": ids, "metadatas": metadatas}
+        if want_docs:
+            out["documents"] = documents
+        return out
 
 
 # Backwards-compatible names for imports expecting "chroma" helpers

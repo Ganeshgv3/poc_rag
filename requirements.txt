@@ -5,6 +5,7 @@ numpy
 requests
 chromadb
 qdrant-client
+rank-bm25
 fastapi
 uvicorn
 PyJWT

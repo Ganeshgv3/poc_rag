@@ -16,6 +16,7 @@ from chroma_helpers import (
     save_streamlit_file_registry,
 )
 from env_load import load_dotenv_for_project
+from hybrid_retrieval import retrieve_with_hybrid
 from prompts import build_chat_messages_for_ollama, expand_question_shorthand
 from text_chunking import chunk_text, extract_text
 
@@ -176,19 +177,8 @@ def retrieve_context(
     client,
     top_k: int,
 ) -> Tuple[List[str], List[float]]:
-    query_embedding = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
-    query_vector = np.asarray(query_embedding, dtype=np.float32).tolist()[0]
-
     collection = get_or_create_vector_collection(client, file_record["collection_name"])
-    result = collection.query(
-        query_embeddings=[query_vector],
-        n_results=top_k,
-        include=["documents", "distances", "metadatas"],
-    )
-
-    docs = result.get("documents", [[]])[0] or []
-    distances = result.get("distances", [[]])[0] or []
-    return docs, distances
+    return retrieve_with_hybrid(query, collection, model, top_k)
 
 
 def accuracy_from_distances(distances: List[float]) -> Tuple[str, int]:
