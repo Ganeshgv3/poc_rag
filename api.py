@@ -162,6 +162,9 @@ def init_db():
                     document_id BIGINT NOT NULL,
                     title VARCHAR(255) NOT NULL DEFAULT 'New Chat',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    deleted_at TIMESTAMP NULL DEFAULT NULL,
+                    pinned_at TIMESTAMP NULL DEFAULT NULL,
+                    archived_at TIMESTAMP NULL DEFAULT NULL,
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
                 )
@@ -179,6 +182,21 @@ def init_db():
                 )
                 """
             )
+            try:
+                cur.execute("ALTER TABLE chats ADD COLUMN deleted_at TIMESTAMP NULL DEFAULT NULL")
+            except pymysql.err.OperationalError as exc:
+                if exc.args and exc.args[0] != 1060:
+                    raise
+            try:
+                cur.execute("ALTER TABLE chats ADD COLUMN pinned_at TIMESTAMP NULL DEFAULT NULL")
+            except pymysql.err.OperationalError as exc:
+                if exc.args and exc.args[0] != 1060:
+                    raise
+            try:
+                cur.execute("ALTER TABLE chats ADD COLUMN archived_at TIMESTAMP NULL DEFAULT NULL")
+            except pymysql.err.OperationalError as exc:
+                if exc.args and exc.args[0] != 1060:
+                    raise
     finally:
         conn.close()
 
@@ -252,6 +270,12 @@ class ChatPayload(BaseModel):
 
 class AssistantMessagePayload(BaseModel):
     content: str
+
+
+class ChatPatchPayload(BaseModel):
+    title: Optional[str] = None
+    pinned: Optional[bool] = None
+    archived: Optional[bool] = None
 
 
 def ask_ollama(
@@ -738,7 +762,7 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
             existing_chat = None
             if chat_id:
                 cur.execute(
-                    "SELECT id, title FROM chats WHERE id=%s AND user_id=%s AND document_id=%s",
+                    "SELECT id, title FROM chats WHERE id=%s AND user_id=%s AND document_id=%s AND deleted_at IS NULL AND archived_at IS NULL",
                     (chat_id, user_id, document_id),
                 )
                 existing_chat = cur.fetchone()
@@ -834,7 +858,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
         existing_chat = None
         if chat_id:
             cur.execute(
-                "SELECT id, title FROM chats WHERE id=%s AND user_id=%s AND document_id=%s",
+                "SELECT id, title FROM chats WHERE id=%s AND user_id=%s AND document_id=%s AND deleted_at IS NULL AND archived_at IS NULL",
                 (chat_id, user_id, document_id),
             )
             existing_chat = cur.fetchone()
@@ -858,6 +882,8 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 FROM messages m
                 INNER JOIN chats c ON c.id = m.chat_id
                 WHERE m.id = %s AND m.chat_id = %s AND c.user_id = %s AND c.document_id = %s
+                    AND c.deleted_at IS NULL
+                    AND c.archived_at IS NULL
                 """,
                 (replace_id, chat_id, user_id, document_id),
             )
@@ -980,7 +1006,12 @@ def list_chats(document_id: int, user_id: int = Depends(auth_user)):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, title, created_at FROM chats WHERE user_id=%s AND document_id=%s ORDER BY created_at DESC",
+                """
+                SELECT id, title, created_at, pinned_at, archived_at
+                FROM chats
+                WHERE user_id=%s AND document_id=%s AND deleted_at IS NULL AND archived_at IS NULL
+                ORDER BY (pinned_at IS NULL) ASC, pinned_at DESC, created_at DESC
+                """,
                 (user_id, document_id),
             )
             chats = cur.fetchall()
@@ -995,7 +1026,7 @@ def chat_messages(chat_id: int, user_id: int = Depends(auth_user)):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id FROM chats WHERE id=%s AND user_id=%s",
+                "SELECT id FROM chats WHERE id=%s AND user_id=%s AND deleted_at IS NULL AND archived_at IS NULL",
                 (chat_id, user_id),
             )
             chat = cur.fetchone()
@@ -1012,6 +1043,78 @@ def chat_messages(chat_id: int, user_id: int = Depends(auth_user)):
         conn.close()
 
 
+@app.patch("/api/chats/{chat_id}")
+def patch_chat(chat_id: int, payload: ChatPatchPayload, user_id: int = Depends(auth_user)):
+    if payload.title is None and payload.pinned is None and payload.archived is None:
+        raise HTTPException(status_code=400, detail="No changes provided.")
+
+    sets: List[str] = []
+    args: List = []
+
+    if payload.title is not None:
+        title = (payload.title or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="title cannot be empty.")
+        sets.append("title=%s")
+        args.append(title[:255])
+
+    if payload.pinned is not None:
+        if payload.pinned:
+            sets.append("pinned_at=CURRENT_TIMESTAMP")
+        else:
+            sets.append("pinned_at=NULL")
+
+    if payload.archived is not None:
+        if payload.archived:
+            sets.append("archived_at=CURRENT_TIMESTAMP")
+            sets.append("pinned_at=NULL")
+        else:
+            sets.append("archived_at=NULL")
+
+    if not sets:
+        raise HTTPException(status_code=400, detail="No changes provided.")
+
+    sql = f"UPDATE chats SET {', '.join(sets)} WHERE id=%s AND user_id=%s AND deleted_at IS NULL"
+    args.extend([chat_id, user_id])
+
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, tuple(args))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Chat not found.")
+            cur.execute(
+                """
+                SELECT id, title, created_at, pinned_at, archived_at
+                FROM chats WHERE id=%s AND user_id=%s
+                """,
+                (chat_id, user_id),
+            )
+            row = cur.fetchone()
+        return {"chat": row}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/chats/{chat_id}")
+def soft_delete_chat(chat_id: int, user_id: int = Depends(auth_user)):
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE chats SET deleted_at = CURRENT_TIMESTAMP
+                WHERE id=%s AND user_id=%s AND deleted_at IS NULL
+                """,
+                (chat_id, user_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Chat not found.")
+        return {"message": "Chat removed."}
+    finally:
+        conn.close()
+
+
 @app.post("/api/chats/{chat_id}/messages/assistant")
 def save_assistant_message(chat_id: int, payload: AssistantMessagePayload, user_id: int = Depends(auth_user)):
     content = (payload.content or "").strip()
@@ -1021,7 +1124,10 @@ def save_assistant_message(chat_id: int, payload: AssistantMessagePayload, user_
     conn = db_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM chats WHERE id=%s AND user_id=%s", (chat_id, user_id))
+            cur.execute(
+                "SELECT id FROM chats WHERE id=%s AND user_id=%s AND deleted_at IS NULL AND archived_at IS NULL",
+                (chat_id, user_id),
+            )
             chat = cur.fetchone()
             if not chat:
                 raise HTTPException(status_code=404, detail="Chat not found.")

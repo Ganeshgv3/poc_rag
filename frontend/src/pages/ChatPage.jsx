@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
 
@@ -155,6 +156,71 @@ function DocIconEdit({ className = "", ...rest }) {
   );
 }
 
+function IconMoreHorizontal({ className = "", ...rest }) {
+  return (
+    <svg
+      className={className}
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden
+      {...rest}
+    >
+      <circle cx="5" cy="12" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="19" cy="12" r="2" />
+    </svg>
+  );
+}
+
+function IconPin({ className = "", ...rest }) {
+  return (
+    <svg
+      className={className}
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <line x1="12" x2="12" y1="17" y2="22" />
+      <path d="M5 17h14v-1a7 7 0 0 0-7-7 7 7 0 0 0-7 7v1Z" />
+    </svg>
+  );
+}
+
+function IconArchive({ className = "", ...rest }) {
+  return (
+    <svg
+      className={className}
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <rect x="3" y="4" width="18" height="4" rx="1" />
+      <path d="M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
+      <path d="M10 12h4" />
+    </svg>
+  );
+}
+
+function isChatPinned(chat) {
+  return chat?.pinned_at != null && chat.pinned_at !== "";
+}
+
 export default function ChatPage() {
   const navigate = useNavigate();
   const [files, setFiles] = useState([]);
@@ -174,6 +240,12 @@ export default function ChatPage() {
   const [error, setError] = useState("");
   const [editingUserMessageId, setEditingUserMessageId] = useState(null);
   const [editingDraft, setEditingDraft] = useState("");
+  const [editingSidebarChatId, setEditingSidebarChatId] = useState(null);
+  const [editingSidebarTitle, setEditingSidebarTitle] = useState("");
+  const [renamingChat, setRenamingChat] = useState(false);
+  const [deleteChatTarget, setDeleteChatTarget] = useState(null);
+  const [deletingChat, setDeletingChat] = useState(false);
+  const [chatMenu, setChatMenu] = useState(null);
   const selectedChatIdRef = useRef(null);
   const startFreshRef = useRef(localStorage.getItem("startFreshChat") === "1");
   const messagesContainerRef = useRef(null);
@@ -188,6 +260,8 @@ export default function ChatPage() {
   const isUserScrollingSidebarRef = useRef(false);
   const sidebarScrollIdleTimerRef = useRef(null);
   const questionInputRef = useRef(null);
+  const renameChatInputRef = useRef(null);
+  const chatOverflowMenuRef = useRef(null);
   const messagesEndRef = useRef(null);
   const toastTimerRef = useRef(null);
   const streamAbortRef = useRef(null);
@@ -200,6 +274,53 @@ export default function ChatPage() {
   useEffect(() => {
     selectedChatIdRef.current = selectedChatId;
   }, [selectedChatId]);
+
+  useEffect(() => {
+    if (editingSidebarChatId == null) return;
+    requestAnimationFrame(() => {
+      renameChatInputRef.current?.focus();
+      renameChatInputRef.current?.select();
+    });
+  }, [editingSidebarChatId]);
+
+  useEffect(() => {
+    setEditingSidebarChatId(null);
+    setEditingSidebarTitle("");
+    setDeleteChatTarget(null);
+    setChatMenu(null);
+  }, [selectedDocument?.id]);
+
+  useEffect(() => {
+    if (!chatMenu) return;
+    const onDocMouseDown = (e) => {
+      if (chatOverflowMenuRef.current?.contains(e.target)) return;
+      if (e.target.closest?.("[data-chat-overflow-trigger]")) return;
+      setChatMenu(null);
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [chatMenu]);
+
+  useEffect(() => {
+    if (!chatMenu) return;
+    const close = () => setChatMenu(null);
+    const node = fileListRef.current;
+    node?.addEventListener("scroll", close, { passive: true });
+    window.addEventListener("resize", close);
+    return () => {
+      node?.removeEventListener("scroll", close);
+      window.removeEventListener("resize", close);
+    };
+  }, [chatMenu]);
+
+  useEffect(() => {
+    if (!chatMenu) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setChatMenu(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [chatMenu]);
 
   const animateScrollToBottom = (smooth = true) => {
     const node = messagesContainerRef.current;
@@ -631,6 +752,124 @@ export default function ChatPage() {
     setEditingDraft("");
   };
 
+  const cancelRenameSidebarChat = () => {
+    setEditingSidebarChatId(null);
+    setEditingSidebarTitle("");
+  };
+
+  const beginRenameSidebarChat = (chat) => {
+    if (sending || renamingChat || !chat?.id) return;
+    setChatMenu(null);
+    setDeleteChatTarget(null);
+    setEditingSidebarChatId(chat.id);
+    setEditingSidebarTitle(String(chat.title || "").trim() || "Conversation");
+  };
+
+  const submitRenameSidebarChat = async (event) => {
+    event.preventDefault();
+    const nextTitle = editingSidebarTitle.trim();
+    if (!nextTitle || editingSidebarChatId == null || !selectedDocument?.id || renamingChat) return;
+    setRenamingChat(true);
+    setError("");
+    try {
+      await api.patch(`/chats/${editingSidebarChatId}`, { title: nextTitle });
+      await loadChatListOnly(selectedDocument.id);
+      showSuccessToast("Conversation renamed.");
+      cancelRenameSidebarChat();
+    } catch (err) {
+      if (err.response?.status === 401) {
+        localStorage.clear();
+        navigate("/login");
+      } else {
+        setError(err.response?.data?.detail || "Could not rename this conversation.");
+      }
+    } finally {
+      setRenamingChat(false);
+    }
+  };
+
+  const confirmSoftDeleteChat = async () => {
+    if (!deleteChatTarget?.id || !selectedDocument || deletingChat) return;
+    const chatId = deleteChatTarget.id;
+    const wasSelected = selectedChatIdRef.current === chatId;
+    setDeletingChat(true);
+    setError("");
+    try {
+      await api.delete(`/chats/${chatId}`);
+      const { data } = await api.get("/chats", { params: { document_id: selectedDocument.id } });
+      const nextChats = data.chats || [];
+      setChats(nextChats);
+      setDeleteChatTarget(null);
+      showSuccessToast("Conversation removed.");
+      if (wasSelected) {
+        const nextId = nextChats[0]?.id ?? null;
+        if (nextId) {
+          await openExistingChat(nextId);
+        } else {
+          openNewChat();
+        }
+      }
+    } catch (err) {
+      if (err.response?.status === 401) {
+        localStorage.clear();
+        navigate("/login");
+      } else {
+        setError(err.response?.data?.detail || "Could not remove this conversation.");
+      }
+    } finally {
+      setDeletingChat(false);
+    }
+  };
+
+  const handleTogglePinChat = async (chat) => {
+    if (!selectedDocument?.id || !chat?.id) return;
+    setChatMenu(null);
+    setError("");
+    const nextPinned = !isChatPinned(chat);
+    try {
+      await api.patch(`/chats/${chat.id}`, { pinned: nextPinned });
+      await loadChatListOnly(selectedDocument.id);
+      showSuccessToast(nextPinned ? "Chat pinned." : "Chat unpinned.");
+    } catch (err) {
+      if (err.response?.status === 401) {
+        localStorage.clear();
+        navigate("/login");
+      } else {
+        setError(err.response?.data?.detail || "Could not update pin.");
+      }
+    }
+  };
+
+  const handleArchiveChat = async (chat) => {
+    if (!selectedDocument?.id || !chat?.id) return;
+    setChatMenu(null);
+    const cid = chat.id;
+    const wasSelected = selectedChatIdRef.current === cid;
+    setError("");
+    try {
+      await api.patch(`/chats/${cid}`, { archived: true });
+      showSuccessToast("Chat archived.");
+      const { data } = await api.get("/chats", { params: { document_id: selectedDocument.id } });
+      const nextChats = data.chats || [];
+      setChats(nextChats);
+      if (wasSelected) {
+        const nextId = nextChats[0]?.id ?? null;
+        if (nextId) {
+          await openExistingChat(nextId);
+        } else {
+          openNewChat();
+        }
+      }
+    } catch (err) {
+      if (err.response?.status === 401) {
+        localStorage.clear();
+        navigate("/login");
+      } else {
+        setError(err.response?.data?.detail || "Could not archive this chat.");
+      }
+    }
+  };
+
   const submitEditedUserMessage = async (messageId) => {
     const next = editingDraft.trim();
     if (!next || !selectedDocument || !selectedChatId || sending) return;
@@ -666,6 +905,8 @@ export default function ChatPage() {
     setQuestion("");
     setError("");
     cancelEditUserMessage();
+    cancelRenameSidebarChat();
+    setChatMenu(null);
   };
 
   const deleteSelectedDocument = async () => {
@@ -691,6 +932,8 @@ export default function ChatPage() {
     setIsCreatingNewChat(false);
     setError("");
     cancelEditUserMessage();
+    cancelRenameSidebarChat();
+    setChatMenu(null);
     try {
       const { data } = await api.get(`/chats/${chatId}/messages`);
       setMessages((data.messages || []).filter((message) => String(message?.content || "").trim().length > 0));
@@ -979,11 +1222,86 @@ export default function ChatPage() {
                   delete chatItemRefs.current[chat.id];
                 }
               }}
-              className={`file-item ${selectedChatId === chat.id ? "active" : ""}`}
+              className={[
+                "file-item file-item--chat",
+                selectedChatId === chat.id ? "active" : "",
+                chatMenu?.chatId === chat.id ? "chat-item--overflow-open" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
             >
-              <button type="button" className="chat-item-main" onClick={() => openExistingChat(chat.id)}>
-                <strong>{chat.title}</strong>
-              </button>
+              {editingSidebarChatId === chat.id ? (
+                <form className="chat-item-rename-form" onSubmit={submitRenameSidebarChat}>
+                  <input
+                    ref={renameChatInputRef}
+                    className="chat-item-rename-input"
+                    value={editingSidebarTitle}
+                    onChange={(e) => setEditingSidebarTitle(e.target.value)}
+                    maxLength={255}
+                    disabled={renamingChat}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        if (!renamingChat) cancelRenameSidebarChat();
+                      }
+                    }}
+                    aria-label="Conversation name"
+                  />
+                  <div className="chat-item-rename-actions">
+                    <button type="submit" className="chat-item-rename-save" disabled={renamingChat}>
+                      {renamingChat ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-item-rename-cancel"
+                      onClick={cancelRenameSidebarChat}
+                      disabled={renamingChat}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="chat-item-row">
+                  <button type="button" className="chat-item-main" onClick={() => openExistingChat(chat.id)}>
+                    <span className="chat-item-title-stack">
+                      {isChatPinned(chat) ? (
+                        <IconPin className="chat-item-inline-pin" aria-hidden />
+                      ) : null}
+                      <strong>{chat.title}</strong>
+                    </span>
+                  </button>
+                  <div className="chat-item-overflow">
+                    <button
+                      type="button"
+                      className="chat-item-more-btn"
+                      data-chat-overflow-trigger
+                      aria-expanded={chatMenu?.chatId === chat.id}
+                      aria-haspopup="menu"
+                      aria-label="Conversation options"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (uploading || sending || renamingChat || deletingChat) return;
+                        if (chatMenu?.chatId === chat.id) {
+                          setChatMenu(null);
+                        } else {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const width = 220;
+                          setChatMenu({
+                            chatId: chat.id,
+                            top: rect.bottom + 6,
+                            left: Math.min(window.innerWidth - width - 8, Math.max(8, rect.right - width)),
+                            chat,
+                          });
+                        }
+                      }}
+                      disabled={uploading || sending || renamingChat || deletingChat}
+                    >
+                      <IconMoreHorizontal />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
           {!selectedDocument ? (
@@ -1216,6 +1534,91 @@ export default function ChatPage() {
           </div>
         </div>
       ) : null}
+      {deleteChatTarget ? (
+        <div className="modal-backdrop" onClick={() => !deletingChat && setDeleteChatTarget(null)}>
+          <div className="confirm-modal" onClick={(e) => e.stopPropagation()}>
+            <h4>Remove conversation?</h4>
+            <p>
+              Remove <strong>{deleteChatTarget.title || "this conversation"}</strong> from Recents? It will be hidden
+              from your list; messages stay stored on the server.
+            </p>
+            <div className="confirm-modal-actions">
+              <button
+                type="button"
+                className="modal-cancel-btn"
+                onClick={() => setDeleteChatTarget(null)}
+                disabled={deletingChat}
+              >
+                Cancel
+              </button>
+              <button type="button" className="modal-delete-btn" onClick={confirmSoftDeleteChat} disabled={deletingChat}>
+                {deletingChat ? "Removing…" : "Remove"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {chatMenu
+        ? createPortal(
+            <div
+              ref={chatOverflowMenuRef}
+              className="chat-overflow-menu"
+              data-chat-overflow="menu"
+              style={{
+                position: "fixed",
+                top: chatMenu.top,
+                left: chatMenu.left,
+                zIndex: 200,
+              }}
+              role="menu"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="chat-overflow-menu-item"
+                onClick={() => {
+                  const c = chatMenu.chat;
+                  setChatMenu(null);
+                  beginRenameSidebarChat(c);
+                }}
+              >
+                <DocIconEdit className="chat-overflow-menu-icon" />
+                <span>Rename</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="chat-overflow-menu-item"
+                onClick={() => handleTogglePinChat(chatMenu.chat)}
+              >
+                <IconPin className="chat-overflow-menu-icon" />
+                <span>{isChatPinned(chatMenu.chat) ? "Unpin chat" : "Pin chat"}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="chat-overflow-menu-item"
+                onClick={() => handleArchiveChat(chatMenu.chat)}
+              >
+                <IconArchive className="chat-overflow-menu-icon" />
+                <span>Archive</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="chat-overflow-menu-item chat-overflow-menu-item--danger"
+                onClick={() => {
+                  setDeleteChatTarget(chatMenu.chat);
+                  setChatMenu(null);
+                }}
+              >
+                <DocIconTrash className="chat-overflow-menu-icon" />
+                <span>Delete</span>
+              </button>
+            </div>,
+            document.body
+          )
+        : null}
       {toastMessage ? (
         <div className="app-toast success" role="status" aria-live="polite">
           <span className="app-toast-icon" aria-hidden="true">
