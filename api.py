@@ -22,7 +22,9 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from chroma_helpers import create_chroma_client, delete_named_collection, get_or_create_vector_collection
 from env_load import format_env_search_list, load_dotenv_for_project
-from rag_pipeline import run_pdf_rag_sync, stream_pdf_rag_llm_tokens
+from prompts import expand_question_shorthand
+from rag_metrics import accuracy_from_signals
+from rag_pipeline import retry_rag_llm_if_weak, run_pdf_rag_sync, stream_pdf_rag_llm_tokens
 from rag_routing import clean_answer_text
 from text_chunking import chunk_text, extract_text
 
@@ -39,6 +41,20 @@ OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-me-secret")
 JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", "120"))
+
+
+def rag_chat_llm_temperature() -> float:
+    try:
+        return float(os.getenv("RAG_CHAT_TEMPERATURE", "0.0"))
+    except ValueError:
+        return 0.0
+
+
+def rag_chat_llm_num_predict() -> int:
+    try:
+        return max(160, int(os.getenv("RAG_CHAT_NUM_PREDICT", "320")))
+    except ValueError:
+        return 320
 
 
 def context_memory_enabled() -> bool:
@@ -194,6 +210,17 @@ def init_db():
             except pymysql.err.OperationalError as exc:
                 if exc.args and exc.args[0] != 1060:
                     raise
+            for msg_col_sql in (
+                "ALTER TABLE messages ADD COLUMN retrieval_seconds DOUBLE NULL DEFAULT NULL",
+                "ALTER TABLE messages ADD COLUMN latency_seconds DOUBLE NULL DEFAULT NULL",
+                "ALTER TABLE messages ADD COLUMN accuracy_label VARCHAR(24) NULL DEFAULT NULL",
+                "ALTER TABLE messages ADD COLUMN accuracy_score INT NULL DEFAULT NULL",
+            ):
+                try:
+                    cur.execute(msg_col_sql)
+                except pymysql.err.OperationalError as exc:
+                    if exc.args and exc.args[0] != 1060:
+                        raise
     finally:
         conn.close()
 
@@ -267,6 +294,10 @@ class ChatPayload(BaseModel):
 
 class AssistantMessagePayload(BaseModel):
     content: str
+    retrieval_seconds: Optional[float] = None
+    latency_seconds: Optional[float] = None
+    accuracy_label: Optional[str] = None
+    accuracy_score: Optional[int] = None
 
 
 class ChatPatchPayload(BaseModel):
@@ -632,7 +663,7 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
 
             started_at = time.perf_counter()
             try:
-                answer, contexts, distances = run_pdf_rag_sync(
+                answer, contexts, distances, retrieval_seconds = run_pdf_rag_sync(
                     question=question,
                     collection_name=doc["collection_name"],
                     embedding_model=get_embedding_model(),
@@ -641,8 +672,8 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
                     ollama_model=OLLAMA_MODEL,
                     prior_messages=prior_messages or None,
                     top_k=3,
-                    temperature=0.2,
-                    num_predict=220,
+                    temperature=rag_chat_llm_temperature(),
+                    num_predict=rag_chat_llm_num_predict(),
                     allow_inference=True,
                 )
             except Exception as exc:
@@ -650,7 +681,9 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 if detail:
                     raise HTTPException(status_code=503, detail=detail) from exc
                 raise
-            answer = clean_answer_text(answer)
+            answer = clean_answer_text(answer, question)
+            elapsed = round(time.perf_counter() - started_at, 2)
+            acc_label, acc_score = accuracy_from_signals(answer, contexts, distances)
             mysql_db = os.getenv("MYSQL_DATABASE", "rag_app")
             print(
                 "\n--- Question & answer (POST /api/chat) ---",
@@ -669,8 +702,11 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 (chat_id, question),
             )
             cur.execute(
-                "INSERT INTO messages (chat_id, role, content) VALUES (%s, 'assistant', %s)",
-                (chat_id, answer),
+                """
+                INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score)
+                VALUES (%s, 'assistant', %s, %s, %s, %s, %s)
+                """,
+                (chat_id, answer, retrieval_seconds, elapsed, acc_label, acc_score),
             )
             if chat_id:
                 cur.execute(
@@ -685,12 +721,14 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
                     "UPDATE chats SET title=%s WHERE id=%s",
                     (improved_title, chat_id),
                 )
-            elapsed = round(time.perf_counter() - started_at, 2)
 
         return {
             "answer": answer,
             "contexts": contexts,
             "distances": distances,
+            "retrieval_seconds": retrieval_seconds,
+            "accuracy_label": acc_label,
+            "accuracy_score": acc_score,
             "latency_seconds": elapsed,
             "chat_id": chat_id,
         }
@@ -780,7 +818,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
             prior_messages = fetch_prior_messages(cur, chat_id, exclude_last_user=True)
 
     try:
-        contexts, distances, prefilled, token_iter = stream_pdf_rag_llm_tokens(
+        contexts, distances, retrieval_seconds, prefilled, token_iter, question_for_rag = stream_pdf_rag_llm_tokens(
             question=question,
             collection_name=doc["collection_name"],
             embedding_model=get_embedding_model(),
@@ -789,8 +827,8 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
             ollama_model=OLLAMA_MODEL,
             prior_messages=prior_messages or None,
             top_k=3,
-            temperature=0.2,
-            num_predict=220,
+            temperature=rag_chat_llm_temperature(),
+            num_predict=rag_chat_llm_num_predict(),
             allow_inference=True,
         )
     except Exception as exc:
@@ -802,21 +840,39 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
 
     def event_stream():
         answer_parts: List[str] = []
+        stream_wall0 = time.perf_counter()
         try:
-            yield sse_event({"type": "meta", "chat_id": chat_id})
+            yield sse_event({"type": "meta", "chat_id": chat_id, "retrieval_seconds": retrieval_seconds})
             if prefilled:
-                answer = clean_answer_text(prefilled)
+                answer = clean_answer_text(prefilled, question)
                 for part in chunk_text_for_stream(answer):
                     answer_parts.append(part)
                     yield sse_event({"type": "token", "delta": part})
+                final_answer = answer
             else:
                 for delta in token_iter:
                     if not delta:
                         continue
                     answer_parts.append(delta)
                     yield sse_event({"type": "token", "delta": delta})
+                raw_joined = "".join(answer_parts)
+                cleaned = clean_answer_text(raw_joined, question)
+                qfr = (question_for_rag or "").strip() or expand_question_shorthand(question)
+                final_answer = retry_rag_llm_if_weak(
+                    streamed_raw=raw_joined,
+                    cleaned_answer=cleaned,
+                    question=question,
+                    question_for_rag=qfr,
+                    contexts=contexts,
+                    prior_messages=prior_messages,
+                    ollama_base_url=OLLAMA_API_URL,
+                    ollama_model=OLLAMA_MODEL,
+                    allow_inference=True,
+                    base_num_predict=rag_chat_llm_num_predict(),
+                )
 
-            final_answer = clean_answer_text("".join(answer_parts))
+            acc_label, acc_score = accuracy_from_signals(final_answer, contexts, distances)
+            total_latency = round(time.perf_counter() - stream_wall0, 2)
             mysql_db = os.getenv("MYSQL_DATABASE", "rag_app")
             print(
                 "\n--- Question & answer (POST /api/chat/stream) ---",
@@ -832,13 +888,28 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
             with conn.cursor() as cur:
                 if replace_id and replace_assistant_message_id:
                     cur.execute(
-                        "UPDATE messages SET content=%s WHERE id=%s AND chat_id=%s",
-                        (final_answer, replace_assistant_message_id, chat_id),
+                        """
+                        UPDATE messages SET content=%s, retrieval_seconds=%s, latency_seconds=%s,
+                            accuracy_label=%s, accuracy_score=%s
+                        WHERE id=%s AND chat_id=%s
+                        """,
+                        (
+                            final_answer,
+                            retrieval_seconds,
+                            total_latency,
+                            acc_label,
+                            acc_score,
+                            replace_assistant_message_id,
+                            chat_id,
+                        ),
                     )
                 else:
                     cur.execute(
-                        "INSERT INTO messages (chat_id, role, content) VALUES (%s, 'assistant', %s)",
-                        (chat_id, final_answer),
+                        """
+                        INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score)
+                        VALUES (%s, 'assistant', %s, %s, %s, %s, %s)
+                        """,
+                        (chat_id, final_answer, retrieval_seconds, total_latency, acc_label, acc_score),
                     )
                 cur.execute(
                     "SELECT content FROM messages WHERE chat_id=%s AND role='user' ORDER BY id ASC LIMIT 8",
@@ -851,7 +922,19 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                         "UPDATE chats SET title=%s WHERE id=%s",
                         (improved_title, chat_id),
                     )
-            yield sse_event({"type": "done", "chat_id": chat_id, "answer": final_answer, "contexts": contexts, "distances": distances})
+            yield sse_event(
+                {
+                    "type": "done",
+                    "chat_id": chat_id,
+                    "answer": final_answer,
+                    "contexts": contexts,
+                    "distances": distances,
+                    "retrieval_seconds": retrieval_seconds,
+                    "latency_seconds": total_latency,
+                    "accuracy_label": acc_label,
+                    "accuracy_score": acc_score,
+                }
+            )
         except Exception as exc:
             yield sse_event({"type": "error", "detail": str(exc)})
         finally:
@@ -902,7 +985,10 @@ def chat_messages(chat_id: int, user_id: int = Depends(auth_user)):
                 raise HTTPException(status_code=404, detail="Chat not found.")
 
             cur.execute(
-                "SELECT id, role, content, created_at FROM messages WHERE chat_id=%s ORDER BY id ASC",
+                """
+                SELECT id, role, content, created_at, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score
+                FROM messages WHERE chat_id=%s ORDER BY id ASC
+                """,
                 (chat_id,),
             )
             messages = cur.fetchall()
@@ -1001,8 +1087,18 @@ def save_assistant_message(chat_id: int, payload: AssistantMessagePayload, user_
                 raise HTTPException(status_code=404, detail="Chat not found.")
 
             cur.execute(
-                "INSERT INTO messages (chat_id, role, content) VALUES (%s, 'assistant', %s)",
-                (chat_id, content),
+                """
+                INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score)
+                VALUES (%s, 'assistant', %s, %s, %s, %s, %s)
+                """,
+                (
+                    chat_id,
+                    content,
+                    payload.retrieval_seconds,
+                    payload.latency_seconds,
+                    payload.accuracy_label,
+                    payload.accuracy_score,
+                ),
             )
         return {"message": "Assistant message saved."}
     finally:

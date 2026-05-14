@@ -1,6 +1,5 @@
 import hashlib
 import os
-import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -16,8 +15,9 @@ from chroma_helpers import (
     save_streamlit_file_registry,
 )
 from env_load import load_dotenv_for_project
+from rag_metrics import accuracy_from_signals
 from rag_pipeline import run_pdf_rag_sync
-from rag_routing import NOT_FOUND_REPLIES, is_small_talk
+from rag_routing import is_small_talk
 from text_chunking import chunk_text, extract_text
 
 
@@ -176,53 +176,6 @@ def ingest_pdf(
     return True, f"Indexed {pdf_name} with {len(chunks)} chunks."
 
 
-def accuracy_from_distances(distances: List[float]) -> Tuple[str, int]:
-    if not distances:
-        return "Low", 0
-    avg_distance = float(sum(distances) / len(distances))
-    score = max(0, min(100, int((1.2 - avg_distance) * 100)))
-    if score >= 80:
-        return "High", score
-    if score >= 55:
-        return "Medium", score
-    return "Low", score
-
-
-def support_score_from_context(answer: str, contexts: List[str]) -> int:
-    if not answer.strip() or not contexts:
-        return 0
-    answer_tokens = {
-        tok
-        for tok in re.findall(r"[a-z0-9\+\#\.]+", answer.lower())
-        if len(tok) > 2 and tok not in {"the", "and", "for", "with", "from", "that", "this"}
-    }
-    if not answer_tokens:
-        return 0
-    context_text = " ".join(contexts).lower()
-    matched = sum(1 for tok in answer_tokens if tok in context_text)
-    ratio = matched / max(1, len(answer_tokens))
-    return int(max(0, min(100, ratio * 100)))
-
-
-def is_not_found_answer(answer: str) -> bool:
-    normalized = (answer or "").strip().lower()
-    return any(reply.lower() == normalized for reply in NOT_FOUND_REPLIES)
-
-
-def accuracy_from_signals(answer: str, contexts: List[str], distances: List[float]) -> Tuple[str, int]:
-    if is_not_found_answer(answer):
-        return "Low", 0
-    dist_label, dist_score = accuracy_from_distances(distances)
-    _ = dist_label
-    support_score = support_score_from_context(answer, contexts)
-    final_score = int(round((dist_score * 0.5) + (support_score * 0.5)))
-    if final_score >= 80:
-        return "High", final_score
-    if final_score >= 55:
-        return "Medium", final_score
-    return "Low", final_score
-
-
 def get_available_models() -> List[str]:
     try:
         response = requests.get(f"{OLLAMA_API_URL}/api/tags", timeout=4)
@@ -355,6 +308,8 @@ for message in st.session_state.messages_by_file[chat_key]:
         if message["role"] == "assistant":
             if not message.get("is_friendly"):
                 st.caption(f"Accuracy: {message['accuracy_label']} ({message['accuracy_score']}%)")
+            if "retrieval_seconds" in message and message["retrieval_seconds"] is not None:
+                st.caption(f"Retrieval: {float(message['retrieval_seconds']):.2f}s")
             if "latency_seconds" in message:
                 st.caption(f"Response time: {message['latency_seconds']:.2f}s")
             if message.get("sources"):
@@ -374,6 +329,7 @@ if user_question:
             started_at = time.perf_counter()
             contexts: List[str] = []
             distances: List[float] = []
+            retrieval_seconds = 0.0
             accuracy_label, accuracy_score = "N/A", 0
             if st.session_state.stop_requested:
                 answer = "Response cancelled."
@@ -388,7 +344,7 @@ if user_question:
                         )
                         if not prior_messages:
                             prior_messages = None
-                    answer, contexts, distances = run_pdf_rag_sync(
+                    answer, contexts, distances, retrieval_seconds = run_pdf_rag_sync(
                         question=user_question.strip(),
                         collection_name=current_record["collection_name"],
                         embedding_model=embed_model,
@@ -421,6 +377,8 @@ if user_question:
             st.markdown(answer)
             if not is_friendly:
                 st.caption(f"Accuracy: {accuracy_label} ({accuracy_score}%)")
+            if retrieval_seconds and retrieval_seconds > 0:
+                st.caption(f"Retrieval: {retrieval_seconds:.2f}s")
             st.caption(f"Response time: {elapsed_seconds:.2f}s")
             if contexts:
                 with st.expander("Retrieved context"):
@@ -436,6 +394,7 @@ if user_question:
                     "accuracy_score": accuracy_score,
                     "is_friendly": is_friendly,
                     "latency_seconds": elapsed_seconds,
+                    "retrieval_seconds": retrieval_seconds,
                     "sources": contexts,
                 }
             )

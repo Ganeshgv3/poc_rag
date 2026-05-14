@@ -242,6 +242,39 @@ function isChatPinned(chat) {
   return chat?.pinned_at != null && chat.pinned_at !== "";
 }
 
+/** Coerce DB / JSON types so each assistant row can show retrieval & accuracy after reload. */
+function normalizeMessageRow(m) {
+  if (!m || typeof m !== "object") return m;
+  const out = { ...m };
+  if (out.retrieval_seconds != null && out.retrieval_seconds !== "") {
+    const n = Number(out.retrieval_seconds);
+    if (Number.isFinite(n)) out.retrieval_seconds = n;
+    else delete out.retrieval_seconds;
+  } else {
+    delete out.retrieval_seconds;
+  }
+  if (out.latency_seconds != null && out.latency_seconds !== "") {
+    const n = Number(out.latency_seconds);
+    if (Number.isFinite(n)) out.latency_seconds = n;
+    else delete out.latency_seconds;
+  } else {
+    delete out.latency_seconds;
+  }
+  if (out.accuracy_score != null && out.accuracy_score !== "") {
+    const n = Number(out.accuracy_score);
+    if (Number.isFinite(n)) out.accuracy_score = n;
+    else delete out.accuracy_score;
+  } else {
+    delete out.accuracy_score;
+  }
+  if (!out.accuracy_label) delete out.accuracy_label;
+  return out;
+}
+
+function normalizeMessagesFromApi(rows) {
+  return (rows || []).map(normalizeMessageRow);
+}
+
 export default function ChatPage() {
   const navigate = useNavigate();
   const [files, setFiles] = useState([]);
@@ -287,6 +320,8 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const toastTimerRef = useRef(null);
   const streamAbortRef = useRef(null);
+  /** Fallback merge when a row still lacks metrics (e.g. old rows) after reload. */
+  const lastStreamAssistantMetaRef = useRef(null);
   const [showPdfViewer, setShowPdfViewer] = useState(false);
   const [pdfObjectUrl, setPdfObjectUrl] = useState(null);
   const [pdfLoading, setPdfLoading] = useState(false);
@@ -481,7 +516,11 @@ export default function ChatPage() {
 
       if (resolvedChatId) {
         const messagesResp = await api.get(`/chats/${resolvedChatId}/messages`);
-        setMessages(messagesResp.data.messages || []);
+        setMessages(
+          normalizeMessagesFromApi(
+            (messagesResp.data.messages || []).filter((row) => String(row?.content || "").trim().length > 0)
+          )
+        );
         setIsCreatingNewChat(false);
       } else {
         setMessages([]);
@@ -505,6 +544,23 @@ export default function ChatPage() {
     if (score >= 80) return { label: "High", score };
     if (score >= 55) return { label: "Medium", score };
     return { label: "Low", score };
+  };
+
+  const formatAssistantMetrics = (message) => {
+    const parts = [];
+    if (Number.isFinite(message.retrieval_seconds) && message.retrieval_seconds >= 0) {
+      parts.push(`Retrieval: ${Number(message.retrieval_seconds).toFixed(2)}s`);
+    }
+    if (message.accuracy_label) {
+      if (message.accuracy_label === "N/A") parts.push("Accuracy: N/A");
+      else if (Number.isFinite(message.accuracy_score)) {
+        parts.push(`Accuracy: ${message.accuracy_label} (${message.accuracy_score}%)`);
+      }
+    }
+    if (Number.isFinite(message.latency_seconds)) {
+      parts.push(`Total: ${message.latency_seconds}s`);
+    }
+    return parts.length ? parts.join(" • ") : "";
   };
 
   useEffect(() => {
@@ -608,7 +664,40 @@ export default function ChatPage() {
     if (!cid) return;
     try {
       const { data } = await api.get(`/chats/${cid}/messages`);
-      setMessages((data.messages || []).filter((m) => String(m?.content || "").trim().length > 0));
+      let rows = normalizeMessagesFromApi(
+        (data.messages || []).filter((m) => String(m?.content || "").trim().length > 0)
+      );
+      const merge = lastStreamAssistantMetaRef.current;
+      if (merge && rows.length) {
+        let lastAi = -1;
+        for (let i = rows.length - 1; i >= 0; i--) {
+          if (rows[i].role === "assistant") {
+            lastAi = i;
+            break;
+          }
+        }
+        if (lastAi >= 0) {
+          rows = rows.slice();
+          const base = { ...rows[lastAi] };
+          if (
+            merge.retrieval_seconds != null &&
+            Number.isFinite(Number(merge.retrieval_seconds)) &&
+            base.retrieval_seconds == null
+          ) {
+            base.retrieval_seconds = Number(merge.retrieval_seconds);
+          }
+          if (Number.isFinite(merge.latency_seconds) && base.latency_seconds == null) {
+            base.latency_seconds = merge.latency_seconds;
+          }
+          if (merge.accuracy_label != null && merge.accuracy_label !== "" && base.accuracy_label == null) {
+            base.accuracy_label = merge.accuracy_label;
+            base.accuracy_score = merge.accuracy_score;
+          }
+          rows[lastAi] = base;
+        }
+        lastStreamAssistantMetaRef.current = null;
+      }
+      setMessages(rows);
     } catch {
       /* ignore */
     }
@@ -687,20 +776,50 @@ export default function ChatPage() {
                 setIsCreatingNewChat(false);
               }
             }
+            if (payload.retrieval_seconds != null) {
+              const rs = Number(payload.retrieval_seconds);
+              if (Number.isFinite(rs)) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === streamMessageId ? { ...msg, retrieval_seconds: rs } : msg
+                  )
+                );
+              }
+            }
           } else if (payload.type === "done") {
             donePayload = payload;
             if (payload.chat_id) {
               activeChatId = payload.chat_id;
             }
             const elapsedSeconds = Number(((performance.now() - startedAt) / 1000).toFixed(2));
-            const accuracy = calculateAccuracyFromDistances(payload.distances || []);
+            const serverLat =
+              payload.latency_seconds != null && Number.isFinite(Number(payload.latency_seconds))
+                ? Number(payload.latency_seconds)
+                : elapsedSeconds;
+            const hasServerAccuracy =
+              payload.accuracy_label !== undefined && payload.accuracy_score !== undefined;
+            const accuracy = hasServerAccuracy
+              ? { label: payload.accuracy_label, score: Number(payload.accuracy_score) }
+              : calculateAccuracyFromDistances(payload.distances || []);
+            const rs =
+              payload.retrieval_seconds != null && Number.isFinite(Number(payload.retrieval_seconds))
+                ? Number(payload.retrieval_seconds)
+                : undefined;
+            const mergedRs = rs !== undefined ? rs : undefined;
+            lastStreamAssistantMetaRef.current = {
+              retrieval_seconds: mergedRs,
+              latency_seconds: serverLat,
+              accuracy_label: accuracy.label,
+              accuracy_score: accuracy.score,
+            };
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === streamMessageId
                   ? {
                       ...msg,
                       content: payload.answer || msg.content,
-                      latency_seconds: elapsedSeconds,
+                      latency_seconds: serverLat,
+                      retrieval_seconds: mergedRs !== undefined ? mergedRs : msg.retrieval_seconds,
                       accuracy_label: accuracy.label,
                       accuracy_score: accuracy.score,
                     }
@@ -970,7 +1089,11 @@ export default function ChatPage() {
     setChatMenu(null);
     try {
       const { data } = await api.get(`/chats/${chatId}/messages`);
-      setMessages((data.messages || []).filter((message) => String(message?.content || "").trim().length > 0));
+      setMessages(
+        normalizeMessagesFromApi(
+          (data.messages || []).filter((message) => String(message?.content || "").trim().length > 0)
+        )
+      );
     } catch (err) {
       setError(err.response?.data?.detail || "Failed to load this chat.");
     }
@@ -1509,14 +1632,10 @@ export default function ChatPage() {
                   ) : (
                     <div className="bubble">{message.content}</div>
                   )}
-                  {message.role === "assistant" && Number.isFinite(message.latency_seconds) ? (
-                    <div className="message-meta">
-                      {message.accuracy_label && Number.isFinite(message.accuracy_score)
-                        ? `Accuracy: ${message.accuracy_label} (${message.accuracy_score}%) • `
-                        : ""}
-                      {`${message.latency_seconds}s`}
-                    </div>
-                  ) : null}
+                  {message.role === "assistant" && (() => {
+                    const metaLine = formatAssistantMetrics(message);
+                    return metaLine ? <div className="message-meta">{metaLine}</div> : null;
+                  })()}
                 </div>
               </div>
               ))

@@ -8,7 +8,8 @@ MEMORY_SYSTEM_PROMPT = (
     "Use prior turns to resolve follow-ups, pronouns, shorthand, and elliptical questions. "
     "Treat the latest retrieved Context as primary ground truth for document facts. "
     "If memory conflicts with Context, trust Context. "
-    "Respect the user's original intent even when shorthand is normalized (for example '&' to 'and', '/' to 'or')."
+    "Respect the user's original intent even when shorthand is normalized (for example '&' to 'and', '/' to 'or'). "
+    "Treat different polite or procedural wordings ('how to', 'guide me to', 'show me how to') as the same task when they ask for the same outcome."
 )
 
 
@@ -20,6 +21,11 @@ SYSTEM_PROMPT = (
     "If inference is needed and strongly supported, prefix with 'Inferred:' and keep assumptions explicit.\n"
     "Shorthand handling: '&' means AND (cover all requested parts), spaced '/' means OR (compare supported alternatives).\n"
     "If slash appears inside a single field/code token, treat it as one combined label when context supports that reading.\n"
+    "Procedural questions: phrasings such as 'how to …', 'guide me to …', 'show me how to …', 'walk me through …', "
+    "'steps to …', 'how do I …', and 'help me to …' (when asking for a procedure) are the same user intent. "
+    "If Context describes UI steps, menus, or buttons that accomplish the goal, give those steps—do not treat a different opener as a different question.\n"
+    "Examples of same intent: 'guide me to run a portfolio valuation', 'how to run a portfolio valuation', and 'how do I value a portfolio' "
+    "all target the same workflow—map them to the same headings or controls in Context (e.g. Value a Portfolio, Run, Start, Dashboard).\n"
     "Paraphrase and grammar: questions that use different surface forms but the same intent must be answered the same way. "
     "For example 'how much did X complete in 2009', 'how much X completed in 2009', and 'X completed in 2009' (same X and year) "
     "all ask for the same underlying fact in the document—extract and return that value or phrase from Context.\n"
@@ -28,10 +34,36 @@ SYSTEM_PROMPT = (
 )
 
 
+_PROC_OPENERS = re.compile(
+    r"^(?:"
+    r"guide\s+me\s+to\s+|"
+    r"guide\s+me\s+on\s+|"
+    r"guide\s+me\s+through\s+|"
+    r"show\s+me\s+how\s+to\s+|"
+    r"walk\s+me\s+through\s+|"
+    r"help\s+me\s+to\s+|"
+    r"i\s+want\s+to\s+|"
+    r"i\s+need\s+to\s+|"
+    r"steps\s+to\s+|"
+    r"how\s+do\s+i\s+"
+    r")",
+    re.IGNORECASE,
+)
+
+# Light typo fixes so retrieval matches doc spelling (esp. product terms).
+_COMMON_TYPO_PATTERNS = (
+    (re.compile(r"\bportflio\b", re.IGNORECASE), "portfolio"),
+    (re.compile(r"\bportfolo\b", re.IGNORECASE), "portfolio"),
+    (re.compile(r"\bvalaution\b", re.IGNORECASE), "valuation"),
+)
+
+
 def expand_question_shorthand(text: str) -> str:
     """
     Normalize common shorthand for retrieval + model reasoning.
 
+    - Leading procedural phrases ('guide me to', 'show me how to', …) -> 'how to ' so
+      retrieval aligns with doc-style imperatives and paraphrases match.
     - '&' (with spaces or between word characters) -> ' and '
     - '/' used as a list separator (spaces around slash) -> ' or '
     Does not rewrite tight tokens like dates or paths (e.g. 2024/25, https://...).
@@ -39,6 +71,10 @@ def expand_question_shorthand(text: str) -> str:
     s = (text or "").strip()
     if not s:
         return s
+    s = _PROC_OPENERS.sub("how to ", s)
+    s = re.sub(r"(?i)^how\s+to\s+how\s+to\s+", "how to ", s)
+    for pattern, replacement in _COMMON_TYPO_PATTERNS:
+        s = pattern.sub(replacement, s)
     # Slash as "or" only when used like "A / B" (avoids 2024/25, http://, N/A).
     s = re.sub(r"\s+/\s+", " or ", s)
     # Ampersand: spaced form first, then compact "X&Y" between word-like chars.
@@ -56,6 +92,7 @@ _RETRIEVAL_STRIP_PREFIXES: tuple[str, ...] = (
     "how much ",
     "how many ",
     "how long ",
+    "how to ",  # after procedural normalization; yields e.g. 'create file format' tail for embedding
     "what did ",
     "what was ",
     "what is ",
@@ -73,6 +110,23 @@ _RETRIEVAL_STRIP_PREFIXES: tuple[str, ...] = (
     "i want to know ",
     "i need to know ",
 )
+
+
+def _procedural_retrieval_extras(q: str, lowered: str) -> List[str]:
+    """Short extra queries for procedural 'how to run …' style questions (improves recall vs UI copy)."""
+    extras: List[str] = []
+    if lowered.startswith("how to "):
+        tail = q[7:].strip()
+        tl = tail.lower()
+        for verb in ("run ", "running ", "perform ", "execute "):
+            if tl.startswith(verb):
+                inner = tail[len(verb) :].strip()
+                if len(inner) >= 6:
+                    extras.append(inner)
+                break
+    if "portfolio" in lowered and "valuation" in lowered:
+        extras.extend(("portfolio valuation", "value a portfolio"))
+    return extras
 
 
 def retrieval_query_variants(question_for_rag: str) -> List[str]:
@@ -94,6 +148,7 @@ def retrieval_query_variants(question_for_rag: str) -> List[str]:
             if len(tail) >= 6 and tail.lower() != lowered:
                 out.append(tail)
             break
+    out.extend(_procedural_retrieval_extras(q, lowered))
     seen: set[str] = set()
     uniq: List[str] = []
     for item in out:
@@ -110,11 +165,11 @@ def build_prompt(question: str, contexts: List[str], allow_inference: bool) -> s
     Builds the single user message we send to Ollama.
 
     Notes:
-    - Keep context compact for latency.
+    - Keep context bounded for latency; 1400 chars/chunk reduces dropped UI labels vs 900.
     - Even when inference is allowed, grounded extraction is preferred.
     """
 
-    trimmed_contexts = [ctx[:900] for ctx in (contexts or [])]
+    trimmed_contexts = [ctx[:1400] for ctx in (contexts or [])]
     context_block = "\n\n---\n\n".join(trimmed_contexts)
 
     if allow_inference:
@@ -154,6 +209,8 @@ Reasoning rules:
 - Treat typo-correction as hidden reasoning; do not describe correction unless asked.
 - If multiple typo interpretations are possible, choose the most context-supported one.
 - Interpret '&' as AND and spaced '/' as OR as described in the system instructions; if the question lists multiple AND parts, answer all that the context supports; if OR alternatives, compare each to the document.
+- For how-to and navigation questions, match the user's goal to headings, tabs, buttons, and numbered steps in Context even when their wording used 'guide me', 'show me', or 'walk me through' instead of 'how to'.
+- Treat 'guide me to run …' like 'how to run …': the normalized question in this prompt already aligns those forms—search Context for the same workflow labels (menus, buttons, feature names) and answer with concrete steps, not an empty reply.
 - Map verbose WH-questions to the same factual target as shorter phrasing when they share the same entities (names, IDs, years, amounts): answer with the value or fact from Context, not a request to rephrase.
 - Prefer exact field values (name, PAN, UAN, CTC, net pay, dates, IDs) when available.
 - For numeric answers, preserve units/currency exactly as seen in context.

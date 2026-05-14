@@ -8,7 +8,7 @@ It provides a modern API + web client flow and a legacy Streamlit flow.
 - Current app: `api.py` (FastAPI) + `frontend/` (React + Vite)
 - Legacy app: `app.py` (Streamlit; chat path uses the same `rag_pipeline` / LangGraph flow as the API)
 
-**Orchestration modules:** `rag_pipeline.py` (LangGraph graph + LangChain Ollama), `rag_routing.py` (small-talk / binary / not-found / `clean_answer_text`).
+**Orchestration modules:** `rag_pipeline.py` (LangGraph graph + LangChain Ollama), `rag_routing.py` (small-talk / binary / not-found / `clean_answer_text`), `rag_agentic.py` (optional agentic RAG: post-retrieval grading + follow-up hybrid search), `prompts.py` (system and user prompt assembly, question normalization, retrieval query variants).
 
 At a high level, the app:
 1. uploads and stores PDFs,
@@ -16,7 +16,8 @@ At a high level, the app:
 3. embeds chunks with Sentence Transformers,
 4. stores vectors in a configured vector backend,
 5. retrieves relevant chunks for each question (hybrid dense + BM25 + RRF when enabled),
-6. routes each turn through a **LangGraph** state machine and, when an LLM answer is needed, calls **Ollama** via **LangChain** (`ChatOllama` + LCEL) for grounded generation.
+6. optionally refines retrieval (**agentic RAG**, when enabled) using a short Ollama “grader” pass and merged follow-up queries,
+7. routes each turn through a **LangGraph** state machine and, when an LLM answer is needed, calls **Ollama** via **LangChain** (`ChatOllama` + LCEL) for grounded generation.
 
 **Small-talk** is answered on a dedicated graph branch **before** retrieval, so those turns skip vector search and reduce latency.
 
@@ -45,14 +46,22 @@ At a high level, the app:
 - **Hybrid retrieval** (default): dense vector similarity plus **BM25** lexical scoring, merged with **reciprocal rank fusion (RRF)**. Implemented in `hybrid_retrieval.py` (`retrieve_with_hybrid`); invoked from the LangGraph **retrieve** node in `rag_pipeline.py` (also used by the legacy Streamlit path through the same pipeline). Requires the `rank-bm25` package; if hybrid is disabled or the dependency is missing, the app falls back to dense-only search.
 - Dense search uses the same embedding model and vector backend as before, with a larger candidate pool before fusion; final context size remains the same `top_k` passed into retrieval (e.g. 3 for API chat; Streamlit exposes a slider).
 - Tunable via env: `HYBRID_SEARCH_ENABLED`, `HYBRID_RRF_K`, `HYBRID_DENSE_POOL`, `HYBRID_SPARSE_POOL`, `HYBRID_MAX_TOTAL_CHUNKS` (see `.env.example`).
-- Prompt assembly and message shaping live in `prompts.py`.
-- Question shorthand normalization is supported (for example `&` and spaced `/` handling), applied in the graph’s **expand** step before retrieval.
-- **LangGraph** (`rag_pipeline.py`): compiled `StateGraph` with nodes for expand → (small_talk **or** retrieve) → not_found / binary / LLM. A second compile uses `interrupt_before=["llm"]` so the streaming API can run retrieval + routing in the graph, then stream **LangChain** `ChatOllama` tokens for the LLM path only.
+- **Question normalization (`prompts.expand_question_shorthand`)** runs in the graph’s **expand** step before retrieval. It handles `&` → “and”, spaced `/` → “or”, and maps common **procedural openers** (case-insensitive) to a canonical **“how to ”** prefix—for example “guide me to …”, “show me how to …”, “walk me through …”, “help me to …”, “steps to …”, “how do i …”—so retrieval and generation stay aligned across paraphrases.
+- **`retrieval_query_variants`** (`prompts.py`) supplies up to a few distinct query strings per turn (full normalized question plus optional prefix-stripped tails such as after “how to ”) so hybrid search can recall table-like or imperative chunks; the retrieve node uses the first few variants (capped) and merges with deduplication.
+- Prompt assembly and message shaping live in `prompts.py` (`SYSTEM_PROMPT`, memory-aware user blob via `build_chat_messages_for_ollama`). System and task text stress **intent-stable** answers across procedural wording and discourage empty or generic “rephrase” replies when context supports the topic.
+- **LangGraph** (`rag_pipeline.py`): compiled `StateGraph` with nodes **expand** → (**small_talk** *or* **retrieve**) → **agentic_refine** → **not_found** / **binary** / **llm**. The **agentic_refine** node is a no-op when agentic RAG is off or when retrieval returned no chunks; otherwise it may expand the context set before routing. A second compile uses `interrupt_before=["llm"]` so the streaming API can run expand, retrieval, agentic refinement, and routing inside the graph, then stream **LangChain** `ChatOllama` tokens for the LLM path only.
 - **LangChain**: `langchain-community` `ChatOllama` with `OLLAMA_API_URL` and `OLLAMA_MODEL`; sync answers use a small LCEL chain (`RunnableLambda` → `llm` → `StrOutputParser`). Python deps include `langchain`, `langchain-core`, `langchain-community`, and `langgraph` (see `requirements.txt`).
 - Optional **LangSmith** tracing for LangChain/LangGraph: `LANGCHAIN_TRACING_V2`, `LANGCHAIN_API_KEY` in `.env.example`.
 - Both normal and streaming chat responses are supported in API mode.
 
-### 4) Conversation memory
+### 4) Agentic RAG (optional)
+
+- Implemented in **`rag_agentic.py`**, wired as the **`agentic_refine`** node after the first hybrid retrieval.
+- When **`AGENTIC_RAG_ENABLED`** is true (see `.env.example`), a compact **grader** call (`ChatOllama`, temperature 0) reads the user question plus short previews of retrieved chunks and returns JSON: whether context is **sufficient**, and optional **follow_up_queries** (bounded count, short strings).
+- If the grader marks coverage as weak and proposes queries, the app runs additional **`retrieve_with_hybrid`** passes (with the same variant helper where applicable), **deduplicates** chunks by text, and caps the merged list (**`AGENTIC_RAG_MERGED_CAP`**, etc.). Invalid JSON from the grader is treated as sufficient so the pipeline does not stall.
+- **`run_pdf_rag_sync`** / **`stream_pdf_rag_llm_tokens`** accept optional **`agentic_enabled`**; when omitted, the flag is resolved from the environment (`resolve_agentic_enabled`).
+
+### 5) Conversation memory
 
 - Optional conversational memory is supported for follow-up questions.
 - Controlled by:
@@ -62,7 +71,7 @@ At a high level, the app:
 
 ## Data and persistence
 
-- **MySQL**: users, documents metadata, chats, and messages (API flow). Chat rows support **soft delete** (`deleted_at`), **pin** (`pinned_at`), and **archive** (`archived_at`); the chat list returns only non-deleted, non-archived chats, ordered with pinned items first.
+- **MySQL**: users, documents metadata, chats, and messages (API flow). Chat rows support **soft delete** (`deleted_at`), **pin** (`pinned_at`), and **archive** (`archived_at`); the chat list returns only non-deleted, non-archived chats, ordered with pinned items first. Assistant message rows store optional **RAG metrics** (`retrieval_seconds`, `latency_seconds`, `accuracy_label`, `accuracy_score`) so the UI can show retrieval time and accuracy for every answer after reload.
 - **Vector store**: Chroma on disk or Qdrant (based on `VECTOR_BACKEND`).
 - **Uploads**: original files under `data/uploads`.
 - **Legacy Streamlit registry**: `data/files.json`.
@@ -107,4 +116,5 @@ At a high level, the app:
 - Chunking: `PDF_CHUNK_SIZE`, `PDF_CHUNK_OVERLAP`
 - Vector backend: `VECTOR_BACKEND`, `CHROMA_URL`, `QDRANT_URL`, `QDRANT_API_KEY`
 - Hybrid retrieval: `HYBRID_SEARCH_ENABLED`, `HYBRID_RRF_K`, `HYBRID_DENSE_POOL`, `HYBRID_SPARSE_POOL`, `HYBRID_MAX_TOTAL_CHUNKS`
+- Agentic RAG: `AGENTIC_RAG_ENABLED`, `AGENTIC_RAG_MERGED_CAP`, `AGENTIC_RAG_MAX_FOLLOWUP_QUERIES`, `AGENTIC_RAG_GRADER_NUM_PREDICT`
 - Optional LangSmith (LangChain/LangGraph): `LANGCHAIN_TRACING_V2`, `LANGCHAIN_API_KEY`

@@ -1641,7 +1641,9 @@ body {
 }
 
 .message-meta {
+  margin-top: 6px;
   font-size: 12px;
+  line-height: 1.35;
   color: var(--text-muted);
 }
 
@@ -1649,44 +1651,83 @@ body {
   position: absolute;
   top: -10px;
   right: 2px;
-  border: 1px solid var(--border-default);
-  border-radius: 10px;
-  background: rgba(15, 18, 26, 0.92);
-  color: var(--text-secondary);
+  z-index: 4;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 11px;
+  /* Light chip on dark bubble = maximum contrast for the copy glyph */
+  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 55%, #e2e8f0 100%);
+  color: #0f172a;
   font-size: 13px;
   line-height: 1;
-  padding: 7px 9px;
+  padding: 8px 10px;
   display: grid;
   place-items: center;
   opacity: 0;
   pointer-events: none;
   transform: translateY(4px) scale(0.96);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.75) inset,
+    0 2px 4px rgba(15, 23, 42, 0.12),
+    0 8px 22px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(99, 102, 241, 0.35);
   transition:
     opacity var(--dur-fast) var(--ease-soft),
     transform var(--dur-fast) var(--ease-spring),
     background var(--dur-fast) ease,
     border-color var(--dur-fast) ease,
-    color var(--dur-fast) ease;
+    color var(--dur-fast) ease,
+    box-shadow var(--dur-fast) ease;
 }
 
 .copy-answer-btn-icon {
   display: block;
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0.5px 0 rgba(255, 255, 255, 0.9));
 }
 
-.message.assistant .bubble-wrap:hover .copy-answer-btn {
+.copy-answer-btn-icon path,
+.copy-answer-btn-icon rect,
+.copy-answer-btn-icon line,
+.copy-answer-btn-icon polyline {
+  stroke: #0f172a;
+  stroke-width: 2.55;
+}
+
+.message.assistant .bubble-wrap:hover .copy-answer-btn,
+.message.assistant .bubble-wrap:focus-within .copy-answer-btn {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0) scale(1);
 }
 
 .copy-answer-btn:hover {
-  background: var(--bg-hover);
-  border-color: rgba(99, 102, 241, 0.5);
-  color: #a78bfa;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border-color: rgba(99, 102, 241, 0.55);
+  color: #1e1b4b;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.85) inset,
+    0 2px 6px rgba(99, 102, 241, 0.25),
+    0 10px 28px rgba(0, 0, 0, 0.55),
+    0 0 24px rgba(129, 140, 248, 0.45);
+}
+
+.copy-answer-btn:hover .copy-answer-btn-icon path,
+.copy-answer-btn:hover .copy-answer-btn-icon rect {
+  stroke: #1e1b4b;
 }
 
 .copy-answer-btn:active {
   transform: scale(0.95);
+}
+
+@media (pointer: coarse) {
+  .message.assistant .bubble-wrap .copy-answer-btn {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .typing-bubble {

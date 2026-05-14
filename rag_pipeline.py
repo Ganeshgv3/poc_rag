@@ -7,6 +7,8 @@ LangGraph-orchestrated PDF RAG with LangChain ChatOllama.
 
 from __future__ import annotations
 
+import os
+import time
 import uuid
 from functools import lru_cache
 from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, TypedDict
@@ -24,6 +26,7 @@ from prompts import (
     expand_question_shorthand,
     retrieval_query_variants,
 )
+from rag_agentic import refine_contexts_agentic, resolve_agentic_enabled
 from rag_routing import (
     binary_yes_no_from_context,
     clean_answer_text,
@@ -47,6 +50,8 @@ class RagGraphState(TypedDict, total=False):
     temperature: float
     num_predict: int
     allow_inference: bool
+    agentic_enabled: bool
+    retrieval_phase_seconds: float
     answer: str
 
 
@@ -116,6 +121,53 @@ def _lc_rag_answer_chain(base_url: str, model: str, temperature: float, num_pred
     return RunnableLambda(to_messages) | llm | StrOutputParser()
 
 
+def _weak_llm_raw_output(text: str) -> bool:
+    """True when the model produced almost nothing (whitespace / trivial)."""
+    return len((text or "").strip()) < 16
+
+
+def retry_rag_llm_if_weak(
+    *,
+    streamed_raw: str,
+    cleaned_answer: str,
+    question: str,
+    question_for_rag: str,
+    contexts: List[str],
+    prior_messages: Optional[List[Dict[str, str]]],
+    ollama_base_url: str,
+    ollama_model: str,
+    allow_inference: bool,
+    base_num_predict: int,
+) -> str:
+    """
+    If we had retrieved chunks but the (streamed) reply is empty/short or the empty-answer
+    template fired, run one extra greedy pass (temperature 0, higher num_predict).
+    """
+    if not contexts:
+        return cleaned_answer
+    raw = (streamed_raw or "").strip()
+    ctx_chars = sum(len(c or "") for c in contexts)
+    looks_like_fallback = (
+        "could not line that up" in cleaned_answer.lower()
+        or "could not connect that" in cleaned_answer.lower()
+    )
+    if not _weak_llm_raw_output(streamed_raw) and not (looks_like_fallback and ctx_chars > 350):
+        return cleaned_answer
+    np2 = min(1024, max(int(base_num_predict), int(base_num_predict) + 280))
+    chain = _lc_rag_answer_chain(ollama_base_url.rstrip("/"), ollama_model, 0.0, np2)
+    payload: Dict[str, Any] = {
+        "question_for_rag": question_for_rag,
+        "contexts": contexts,
+        "allow_inference": allow_inference,
+        "prior_messages": prior_messages,
+    }
+    text2 = str(chain.invoke(payload) or "").strip()
+    alt = clean_answer_text(text2, question)
+    if len(alt.strip()) > len(cleaned_answer.strip()):
+        return alt
+    return cleaned_answer
+
+
 def _expand_node(state: RagGraphState) -> Dict[str, Any]:
     q = (state.get("question") or "").strip()
     return {"question_for_rag": expand_question_shorthand(q)}
@@ -123,56 +175,102 @@ def _expand_node(state: RagGraphState) -> Dict[str, Any]:
 
 def _small_talk_node(state: RagGraphState) -> Dict[str, Any]:
     raw = (state.get("question") or "").strip()
-    return {"answer": clean_answer_text(small_talk_reply(raw))}
+    return {"answer": clean_answer_text(small_talk_reply(raw), raw)}
 
 
 def _make_retrieve_node(embedding_model: Any, chroma_client: Any):
     def retrieve_node(state: RagGraphState) -> Dict[str, Any]:
+        t0 = time.perf_counter()
+        prev = float(state.get("retrieval_phase_seconds") or 0.0)
+
+        def with_timing(payload: Dict[str, Any]) -> Dict[str, Any]:
+            payload["retrieval_phase_seconds"] = prev + (time.perf_counter() - t0)
+            return payload
+
         name = state.get("collection_name") or ""
         if not name:
-            return {"contexts": [], "distances": []}
+            return with_timing({"contexts": [], "distances": []})
         top_k = int(state.get("top_k") or 3)
         collection = get_or_create_vector_collection(chroma_client, name)
         q = state.get("question_for_rag") or ""
         batches: List[Tuple[List[str], List[float]]] = []
-        for variant in retrieval_query_variants(q)[:4]:
+        for variant in retrieval_query_variants(q)[:8]:
             docs, dists = retrieve_with_hybrid(variant, collection, embedding_model, top_k)
             if docs:
                 batches.append((list(docs or []), list(dists or [])))
         if not batches:
-            return {"contexts": [], "distances": []}
+            return with_timing({"contexts": [], "distances": []})
         merged_docs, merged_dists = _merge_hybrid_retrieval_batches(batches, top_k)
-        return {"contexts": merged_docs, "distances": merged_dists}
+        return with_timing({"contexts": merged_docs, "distances": merged_dists})
 
     return retrieve_node
+
+
+def _make_agentic_refine_node(embedding_model: Any, chroma_client: Any):
+    def agentic_refine_node(state: RagGraphState) -> Dict[str, Any]:
+        if not resolve_agentic_enabled(state.get("agentic_enabled")):
+            return {}
+        ctx = list(state.get("contexts") or [])
+        if not ctx:
+            return {}
+        name = state.get("collection_name") or ""
+        if not name:
+            return {}
+        t0 = time.perf_counter()
+        prev = float(state.get("retrieval_phase_seconds") or 0.0)
+        new_ctx, new_dists = refine_contexts_agentic(
+            question=str(state.get("question") or ""),
+            question_for_rag=str(state.get("question_for_rag") or ""),
+            contexts=ctx,
+            distances=list(state.get("distances") or []),
+            collection_name=name,
+            top_k=int(state.get("top_k") or 3),
+            embedding_model=embedding_model,
+            chroma_client=chroma_client,
+            ollama_base_url=str(state.get("ollama_base_url") or "http://localhost:11434"),
+            ollama_model=str(state.get("ollama_model") or "llama3.1:8b"),
+        )
+        extra = prev + (time.perf_counter() - t0)
+        if new_ctx == ctx:
+            return {"retrieval_phase_seconds": extra}
+        return {"contexts": new_ctx, "distances": new_dists, "retrieval_phase_seconds": extra}
+
+    return agentic_refine_node
 
 
 def _binary_node(state: RagGraphState) -> Dict[str, Any]:
     q = state.get("question_for_rag") or ""
     ctx = state.get("contexts") or []
-    return {"answer": clean_answer_text(binary_yes_no_from_context(q, ctx))}
+    return {"answer": clean_answer_text(binary_yes_no_from_context(q, ctx), (state.get("question") or "").strip())}
 
 
 def _not_found_node(state: RagGraphState) -> Dict[str, Any]:
     raw = (state.get("question") or "").strip()
-    return {"answer": clean_answer_text(friendly_not_found_reply(raw))}
+    return {"answer": clean_answer_text(friendly_not_found_reply(raw), raw)}
 
 
 def _llm_node(state: RagGraphState) -> Dict[str, Any]:
-    chain = _lc_rag_answer_chain(
-        str(state.get("ollama_base_url") or "http://localhost:11434"),
-        str(state.get("ollama_model") or "llama3.1:8b"),
-        float(state.get("temperature") if state.get("temperature") is not None else 0.2),
-        int(state.get("num_predict") or 220),
-    )
+    base_url = str(state.get("ollama_base_url") or "http://localhost:11434")
+    model = str(state.get("ollama_model") or "llama3.1:8b")
+    temp = float(state.get("temperature") if state.get("temperature") is not None else 0.0)
+    num_predict = int(state.get("num_predict") or 320)
+    chain = _lc_rag_answer_chain(base_url, model, temp, num_predict)
     payload = {
         "question_for_rag": state.get("question_for_rag") or "",
         "contexts": state.get("contexts") or [],
         "allow_inference": state.get("allow_inference", True),
         "prior_messages": state.get("prior_messages"),
     }
-    text = chain.invoke(payload)
-    return {"answer": clean_answer_text(str(text or "").strip())}
+    text = str(chain.invoke(payload) or "").strip()
+    contexts = list(state.get("contexts") or [])
+    if contexts and _weak_llm_raw_output(text):
+        np2 = min(1024, max(num_predict, num_predict + 280))
+        chain2 = _lc_rag_answer_chain(base_url, model, 0.0, np2)
+        text2 = str(chain2.invoke(payload) or "").strip()
+        if len(text2.strip()) > len(text.strip()):
+            text = text2
+    q = (state.get("question") or "").strip()
+    return {"answer": clean_answer_text(text, q)}
 
 
 def _after_expand(state: RagGraphState) -> Literal["small_talk", "retrieve"]:
@@ -195,6 +293,7 @@ def _build_pdf_rag_graph(embedding_model: Any, chroma_client: Any) -> StateGraph
     g.add_node("expand", _expand_node)
     g.add_node("small_talk", _small_talk_node)
     g.add_node("retrieve", _make_retrieve_node(embedding_model, chroma_client))
+    g.add_node("agentic_refine", _make_agentic_refine_node(embedding_model, chroma_client))
     g.add_node("binary", _binary_node)
     g.add_node("not_found", _not_found_node)
     g.add_node("llm", _llm_node)
@@ -206,8 +305,9 @@ def _build_pdf_rag_graph(embedding_model: Any, chroma_client: Any) -> StateGraph
         {"small_talk": "small_talk", "retrieve": "retrieve"},
     )
     g.add_edge("small_talk", END)
+    g.add_edge("retrieve", "agentic_refine")
     g.add_conditional_edges(
-        "retrieve",
+        "agentic_refine",
         _after_retrieve,
         {"not_found": "not_found", "binary": "binary", "llm": "llm"},
     )
@@ -248,11 +348,12 @@ def run_pdf_rag_sync(
     ollama_model: str,
     prior_messages: Optional[List[Dict[str, str]]] = None,
     top_k: int = 3,
-    temperature: float = 0.2,
-    num_predict: int = 220,
+    temperature: float = 0.0,
+    num_predict: int = 320,
     allow_inference: bool = True,
-) -> Tuple[str, List[str], List[float]]:
-    """Run full LangGraph + LangChain path. Returns (answer, contexts, distances)."""
+    agentic_enabled: Optional[bool] = None,
+) -> Tuple[str, List[str], List[float], float]:
+    """Run full LangGraph + LangChain path. Returns (answer, contexts, distances, retrieval_seconds)."""
     full, _ = get_compiled_rag_graphs(embedding_model, chroma_client)
     initial: RagGraphState = {
         "question": question.strip(),
@@ -264,12 +365,16 @@ def run_pdf_rag_sync(
         "temperature": temperature,
         "num_predict": num_predict,
         "allow_inference": allow_inference,
+        "agentic_enabled": resolve_agentic_enabled(agentic_enabled),
+        "retrieval_phase_seconds": 0.0,
     }
     out = full.invoke(initial, _fresh_thread_config())
+    retrieval_seconds = round(float(out.get("retrieval_phase_seconds") or 0.0), 4)
     return (
         str(out.get("answer") or "").strip(),
         list(out.get("contexts") or []),
         list(out.get("distances") or []),
+        retrieval_seconds,
     )
 
 
@@ -283,14 +388,15 @@ def stream_pdf_rag_llm_tokens(
     ollama_model: str,
     prior_messages: Optional[List[Dict[str, str]]] = None,
     top_k: int = 3,
-    temperature: float = 0.2,
-    num_predict: int = 220,
+    temperature: float = 0.0,
+    num_predict: int = 320,
     allow_inference: bool = True,
-) -> Tuple[List[str], List[float], Optional[str], Iterator[str]]:
+    agentic_enabled: Optional[bool] = None,
+) -> Tuple[List[str], List[float], float, Optional[str], Iterator[str], str]:
     """
     Run graph until the LLM node when streaming is required.
 
-    Returns (contexts, distances, prefilled_answer_or_none, token_iterator).
+    Returns (contexts, distances, retrieval_seconds, prefilled_answer_or_none, token_iterator, question_for_rag).
     When prefilled_answer_or_none is set, the iterator is empty and the caller should use it as the full answer.
     """
     _, partial = get_compiled_rag_graphs(embedding_model, chroma_client)
@@ -304,12 +410,16 @@ def stream_pdf_rag_llm_tokens(
         "temperature": temperature,
         "num_predict": num_predict,
         "allow_inference": allow_inference,
+        "agentic_enabled": resolve_agentic_enabled(agentic_enabled),
+        "retrieval_phase_seconds": 0.0,
     }
     out = partial.invoke(initial, _fresh_thread_config())
     contexts = list(out.get("contexts") or [])
     distances = list(out.get("distances") or [])
+    retrieval_seconds = round(float(out.get("retrieval_phase_seconds") or 0.0), 4)
+    question_for_rag = str(out.get("question_for_rag") or "")
     if out.get("answer"):
-        return contexts, distances, str(out["answer"]), iter(())
+        return contexts, distances, retrieval_seconds, str(out["answer"]), iter(()), question_for_rag
 
     def _gen() -> Iterator[str]:
         llm = _chat_ollama(ollama_base_url, ollama_model, temperature, num_predict)
@@ -326,4 +436,4 @@ def stream_pdf_rag_llm_tokens(
             if piece:
                 yield str(piece)
 
-    return contexts, distances, None, _gen()
+    return contexts, distances, retrieval_seconds, None, _gen(), question_for_rag
