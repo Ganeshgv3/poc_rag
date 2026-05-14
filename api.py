@@ -872,7 +872,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 )
 
             acc_label, acc_score = accuracy_from_signals(final_answer, contexts, distances)
-            total_latency = round(time.perf_counter() - stream_wall0, 2)
+            total_latency = max(0.01, round(time.perf_counter() - stream_wall0, 2))
             mysql_db = os.getenv("MYSQL_DATABASE", "rag_app")
             print(
                 "\n--- Question & answer (POST /api/chat/stream) ---",

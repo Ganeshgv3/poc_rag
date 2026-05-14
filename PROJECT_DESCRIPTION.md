@@ -68,6 +68,7 @@ At a high level, the app:
   - `CONTEXT_MEMORY_ENABLED`
   - `CONTEXT_MEMORY_MAX_MESSAGES`
 - Prior user/assistant turns can be included before the current RAG context message.
+- **Elliptical follow-ups** (for example “how to do” right after a topic-setting user question) are resolved in the graph **expand** step: when the current line is short or vague, `question_for_rag` is built from the **latest prior user message** plus the follow-up before shorthand expansion, so retrieval stays on-topic. **Binary yes/no routing** uses the **literal current user line** only, so a merged retrieval string that still begins with “is there …” does not force a second “Yes.” instead of a procedural answer.
 
 ## Data and persistence
 

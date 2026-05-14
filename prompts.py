@@ -9,7 +9,10 @@ MEMORY_SYSTEM_PROMPT = (
     "Treat the latest retrieved Context as primary ground truth for document facts. "
     "If memory conflicts with Context, trust Context. "
     "Respect the user's original intent even when shorthand is normalized (for example '&' to 'and', '/' to 'or'). "
-    "Treat different polite or procedural wordings ('how to', 'guide me to', 'show me how to') as the same task when they ask for the same outcome."
+    "Treat different polite or procedural wordings ('how to', 'guide me to', 'show me how to') as the same task when they ask for the same outcome. "
+    "When the latest user message is very short or vague (for example 'how to do', 'how?', 'steps?', 'what next?'), "
+    "it almost always refers to the **same topic or action** as the **most recent prior USER** message in the chain—answer that combined intent from Context; "
+    "do not ask the user to restate the topic unless they clearly switched to a new subject."
 )
 
 
@@ -31,6 +34,8 @@ SYSTEM_PROMPT = (
     "all ask for the same underlying fact in the document—extract and return that value or phrase from Context.\n"
     "Do not ask the user to rephrase when Context clearly supports an answer. "
     "Do not reply with only a generic 'rephrase your question' unless Context truly has no usable overlap with the request.\n"
+    "Follow-up questions: if the user asks something underspecified like 'how to do', 'how?', or 'what next?', "
+    "bind it to the **latest substantive USER** line in memory (not to a one-word assistant reply like 'Yes.') and answer that full intent.\n"
 )
 
 
@@ -81,6 +86,81 @@ def expand_question_shorthand(text: str) -> str:
     s = re.sub(r"\s*&\s*", " and ", s)
     s = re.sub(r"(?<=[\w\)\]])&(?=[\w\(])", " and ", s)
     return re.sub(r"\s+", " ", s).strip()
+
+
+def _last_user_question_in_chain(prior_messages: Optional[List[Dict[str, str]]]) -> str:
+    """Most recent user message in chronological memory (excludes the current turn when API strips it)."""
+    for m in reversed(prior_messages or []):
+        if m.get("role") == "user":
+            return (m.get("content") or "").strip()
+    return ""
+
+
+def resolve_follow_up_with_memory(question: str, prior_messages: Optional[List[Dict[str, str]]]) -> str:
+    """
+    Expand elliptical follow-ups for retrieval + LLM by anchoring to the last user question in memory.
+
+    Example: prior user asked about loading a portfolio; user then says 'how to do' ->
+    combined query so hybrid search and the model target the same workflow.
+    """
+    q = (question or "").strip()
+    if not q:
+        return q
+    anchor = _last_user_question_in_chain(prior_messages)
+    if not anchor or len(anchor) < 8:
+        return q
+    if len(anchor) > 2400:
+        anchor = anchor[:2397] + "..."
+    lowered = " ".join(q.lower().split())
+    if anchor.casefold() in lowered:
+        return q
+
+    vague_exact = frozenset(
+        {
+            "how",
+            "how?",
+            "how to do",
+            "how to do?",
+            "how do i",
+            "how do i?",
+            "how do i do",
+            "how do i do?",
+            "steps",
+            "steps?",
+            "what next",
+            "what next?",
+            "and then",
+            "and then?",
+            "now what",
+            "now what?",
+            "go on",
+            "continue",
+            "next",
+            "next?",
+        }
+    )
+    vague_prefixes = (
+        "how to do ",
+        "how do i do ",
+        "how do you ",
+        "tell me how ",
+        "yes how ",
+        "ok how ",
+        "what next ",
+        "where do i ",
+        "where to ",
+    )
+    if lowered in vague_exact:
+        return f"{anchor} {q}"
+    if any(lowered.startswith(p.rstrip()) for p in vague_prefixes):
+        return f"{anchor} {q}"
+    if len(q) <= 28 and len(q.split()) <= 5:
+        if not re.search(
+            r"\b(load|upload|create|delete|export|run|value|portfolio|grid|file|format|report|dashboard|settings)\b",
+            lowered,
+        ):
+            return f"{anchor} {q}"
+    return q
 
 
 # Leading phrases that often hurt dense retrieval but can be stripped for a second recall pass
@@ -215,7 +295,7 @@ Reasoning rules:
 - Prefer exact field values (name, PAN, UAN, CTC, net pay, dates, IDs) when available.
 - For numeric answers, preserve units/currency exactly as seen in context.
 - Mention uncertainty in one short line when details are implicit.
-- If question is unrelated to selected PDF, respond with a short friendly not-found reply.
+- If the latest question is underspecified ('how to do', 'how?', 'what next?'), treat it as asking for **how to carry out** the same thing the user asked in their **previous user message** in memory; answer from Context without asking them to repeat the topic.
 Output quality rules:
 - Avoid repetition and filler.
 - Avoid contradictory statements in the same answer.
@@ -267,7 +347,8 @@ def build_chat_messages_for_ollama(
         "Conversation Memory Chain (oldest to latest):\n"
         f"{history_block}\n\n"
         "Current Task:\n"
-        "Answer only the latest question below using retrieved Context as primary evidence.\n\n"
+        "Answer only the latest question below using retrieved Context as primary evidence.\n"
+        "If the latest line is a short follow-up, it refers to the same topic as the latest prior USER line above unless clearly unrelated.\n\n"
         f"{current_prompt}"
     )
     return [{"role": "user", "content": one_chain_prompt}]

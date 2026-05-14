@@ -24,6 +24,7 @@ from hybrid_retrieval import retrieve_with_hybrid
 from prompts import (
     build_chat_messages_for_ollama,
     expand_question_shorthand,
+    resolve_follow_up_with_memory,
     retrieval_query_variants,
 )
 from rag_agentic import refine_contexts_agentic, resolve_agentic_enabled
@@ -170,7 +171,9 @@ def retry_rag_llm_if_weak(
 
 def _expand_node(state: RagGraphState) -> Dict[str, Any]:
     q = (state.get("question") or "").strip()
-    return {"question_for_rag": expand_question_shorthand(q)}
+    prior = state.get("prior_messages")
+    merged = resolve_follow_up_with_memory(q, prior)
+    return {"question_for_rag": expand_question_shorthand(merged)}
 
 
 def _small_talk_node(state: RagGraphState) -> Dict[str, Any]:
@@ -239,9 +242,9 @@ def _make_agentic_refine_node(embedding_model: Any, chroma_client: Any):
 
 
 def _binary_node(state: RagGraphState) -> Dict[str, Any]:
-    q = state.get("question_for_rag") or ""
+    q = (state.get("question") or "").strip()
     ctx = state.get("contexts") or []
-    return {"answer": clean_answer_text(binary_yes_no_from_context(q, ctx), (state.get("question") or "").strip())}
+    return {"answer": clean_answer_text(binary_yes_no_from_context(q, ctx), q)}
 
 
 def _not_found_node(state: RagGraphState) -> Dict[str, Any]:
@@ -283,7 +286,8 @@ def _after_retrieve(state: RagGraphState) -> Literal["not_found", "binary", "llm
     contexts = state.get("contexts") or []
     if not contexts:
         return "not_found"
-    if is_binary_question_prefix(state.get("question_for_rag") or ""):
+    # Route binary yes/no from the user's literal turn, not question_for_rag (which may merge memory).
+    if is_binary_question_prefix((state.get("question") or "").strip()):
         return "binary"
     return "llm"
 
