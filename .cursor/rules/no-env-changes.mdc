@@ -1,0 +1,11 @@
+---
+description: Do not modify environment or secrets files; user maintains them locally
+alwaysApply: true
+---
+
+# Environment files are off-limits
+
+- **Do not** create, edit, delete, rename, or overwrite any of the following (any path): `.env`, `.env.*`, `.envrc`, `*.pem`, `*.key`, or similar local secret/config files.
+- **Do not** paste real secrets, API keys, or passwords into the repo or into chat deliverables meant to be committed.
+- If the project needs a new variable, update **`.env.example`** only (placeholder values, no secrets) and tell the user to add the real value in their own `.env`.
+- If something is broken due to missing env vars, describe what to set and where; do not write those values into `.env` for them.

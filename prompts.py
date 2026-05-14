@@ -4,24 +4,22 @@ import re
 from typing import Dict, List, Optional
 
 MEMORY_SYSTEM_PROMPT = (
-    "You are in a continuing conversation about one PDF. The prior user and assistant messages are real earlier turns in this same thread — read them and use them. "
-    "They matter for follow-ups, pronouns, shorthand, and elliptical questions (e.g. 'that amount', 'same period', 'what about the other one', 'and the address?'). "
-    "Answer the latest question in light of what was already established when the document does not repeat every detail. "
-    "The latest user message ends with freshly retrieved excerpts under Context; treat Context as the primary ground truth for factual claims. "
-    "If an earlier assistant turn conflicts with Context, trust Context for document facts. "
-    "If the Question line expands & as 'and' or / as 'or', still respect the user's original intent."
+    "You are in one continuous conversation about one PDF. "
+    "Use prior turns to resolve follow-ups, pronouns, shorthand, and elliptical questions. "
+    "Treat the latest retrieved Context as primary ground truth for document facts. "
+    "If memory conflicts with Context, trust Context. "
+    "Respect the user's original intent even when shorthand is normalized (for example '&' to 'and', '/' to 'or')."
 )
 
 
 SYSTEM_PROMPT = (
     "You are an expert PDF RAG assistant for enterprise document QA.\n"
-    "Your first priority is to answer from the provided PDF context only.\n"
-    "If exact wording is missing but intent is clearly related to the selected PDF, infer cautiously from nearby evidence.\n"
-    "When inference is used, begin with 'Inferred:' and keep assumptions minimal and explicit.\n"
-    "Never fabricate values, names, dates, IDs, totals, or legal/financial facts.\n"
-    "Shorthand in user questions: treat '&' as logical AND (the user wants both parts addressed together when they list two requirements).\n"
-    "Treat '/' between terms, especially with spaces (e.g. 'basic / DA'), as OR or alternatives: cover each alternative the document supports; "
-    "if the PDF uses a slash inside one label or code (a single token), answer for that combined label when that reading matches the context.\n"
+    "Answer using only the provided PDF Context and valid conversation memory.\n"
+    "Never fabricate values, names, dates, IDs, totals, legal, or financial facts.\n"
+    "If evidence is insufficient, say so clearly and briefly.\n"
+    "If inference is needed and strongly supported, prefix with 'Inferred:' and keep assumptions explicit.\n"
+    "Shorthand handling: '&' means AND (cover all requested parts), spaced '/' means OR (compare supported alternatives).\n"
+    "If slash appears inside a single field/code token, treat it as one combined label when context supports that reading.\n"
 )
 
 
@@ -84,6 +82,10 @@ Formatting rules:
 - Do not use markdown, bullets, tables, bold markers, or decorative symbols.
 - Do not add headings like "Answer:" or "Response:".
 - Keep answers concise and directly useful.
+Memory rules:
+- Use prior turns for continuity only (coreference, follow-ups, constraints, user intent).
+- Do not treat prior assistant claims as facts when they conflict with retrieved Context.
+- If the current question depends on prior turns, resolve it explicitly before answering.
 Reasoning rules:
 - Resolve user typos and grammar issues internally before answering.
 - Treat typo-correction as hidden reasoning; do not describe correction unless asked.
@@ -105,13 +107,23 @@ Conversation rules:
 """.strip()
 
 
+def _build_memory_chain(prior_messages: List[Dict[str, str]]) -> str:
+    if not prior_messages:
+        return ""
+    lines: List[str] = []
+    for idx, message in enumerate(prior_messages, start=1):
+        role = "USER" if message["role"] == "user" else "ASSISTANT"
+        lines.append(f"{idx}. {role}: {message['content']}")
+    return "\n".join(lines)
+
+
 def build_chat_messages_for_ollama(
     question: str,
     contexts: List[str],
     allow_inference: bool,
     prior_messages: Optional[List[Dict[str, str]]] = None,
 ) -> List[Dict[str, str]]:
-    """Multi-turn messages for Ollama: optional recap + current RAG user prompt."""
+    """One-chain memory prompt for Ollama with sharp task constraints."""
     prior = prior_messages or []
     cleaned: List[Dict[str, str]] = []
     for m in prior:
@@ -124,10 +136,18 @@ def build_chat_messages_for_ollama(
             content = content[: max_len - 3] + "..."
         cleaned.append({"role": str(role), "content": content})
 
-    messages: List[Dict[str, str]] = []
-    if cleaned:
-        messages.append({"role": "system", "content": MEMORY_SYSTEM_PROMPT})
-    messages.extend(cleaned)
-    messages.append({"role": "user", "content": build_prompt(question, contexts, allow_inference)})
-    return messages
+    current_prompt = build_prompt(question, contexts, allow_inference)
+    if not cleaned:
+        return [{"role": "user", "content": current_prompt}]
+
+    history_block = _build_memory_chain(cleaned)
+    one_chain_prompt = (
+        f"{MEMORY_SYSTEM_PROMPT}\n\n"
+        "Conversation Memory Chain (oldest to latest):\n"
+        f"{history_block}\n\n"
+        "Current Task:\n"
+        "Answer only the latest question below using retrieved Context as primary evidence.\n\n"
+        f"{current_prompt}"
+    )
+    return [{"role": "user", "content": one_chain_prompt}]
 

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import httpx
 import jwt
 import numpy as np
 import pymysql
@@ -480,16 +481,48 @@ def is_generic_chat_title(title: str) -> bool:
     return cleaned.endswith("?") or len(cleaned.split()) <= 2
 
 
+def _vector_store_unreachable_detail(exc: BaseException) -> Optional[str]:
+    """If exc is a connectivity failure to the vector backend, return an API detail string."""
+    seen: set[int] = set()
+    stack: List[BaseException] = [exc]
+    while stack:
+        e = stack.pop()
+        eid = id(e)
+        if eid in seen:
+            continue
+        seen.add(eid)
+        if isinstance(e, (httpx.ConnectError, httpx.TimeoutException)):
+            return (
+                "Cannot reach the vector database. If you use Qdrant (VECTOR_BACKEND=qdrant), "
+                "start Qdrant and confirm QDRANT_URL (default http://localhost:6333). "
+                "For local on-disk vectors without Qdrant, set VECTOR_BACKEND=chroma or unset it."
+            )
+        if e.__cause__ is not None:
+            stack.append(e.__cause__)
+        if e.__context__ is not None and e.__context__ is not e.__cause__:
+            stack.append(e.__context__)
+        args0 = e.args[0] if e.args else None
+        if isinstance(args0, BaseException) and args0 is not e.__cause__:
+            stack.append(args0)
+    return None
+
+
 def retrieve_context(query: str, collection_name: str, top_k: int = 3) -> Tuple[List[str], List[float]]:
     model = get_embedding_model()
     query_embedding = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
     query_vector = np.asarray(query_embedding, dtype=np.float32).tolist()[0]
-    collection = get_or_create_vector_collection(get_chroma_client(), collection_name)
-    result = collection.query(
-        query_embeddings=[query_vector],
-        n_results=top_k,
-        include=["documents", "distances"],
-    )
+    try:
+        collection = get_or_create_vector_collection(get_chroma_client(), collection_name)
+        result = collection.query(
+            query_embeddings=[query_vector],
+            n_results=top_k,
+            include=["documents", "distances"],
+        )
+    except Exception as exc:
+        detail = _vector_store_unreachable_detail(exc)
+        if detail:
+            raise HTTPException(status_code=503, detail=detail) from exc
+        raise
     docs = result.get("documents", [[]])[0] or []
     distances = result.get("distances", [[]])[0] or []
     return docs, distances
@@ -618,13 +651,19 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(auth_
             file_path.write_bytes(pdf_bytes)
 
             collection_name = f"pdf_{digest[:16]}"
-            collection = get_or_create_vector_collection(get_chroma_client(), collection_name)
-            ids = [f"{digest}_{idx}" for idx in range(len(chunks))]
-            metadatas = [
-                {"chunk_index": idx, "filename": original_name, "sha256": digest}
-                for idx in range(len(chunks))
-            ]
-            collection.add(ids=ids, embeddings=embeddings, documents=chunks, metadatas=metadatas)
+            try:
+                collection = get_or_create_vector_collection(get_chroma_client(), collection_name)
+                ids = [f"{digest}_{idx}" for idx in range(len(chunks))]
+                metadatas = [
+                    {"chunk_index": idx, "filename": original_name, "sha256": digest}
+                    for idx in range(len(chunks))
+                ]
+                collection.add(ids=ids, embeddings=embeddings, documents=chunks, metadatas=metadatas)
+            except Exception as exc:
+                detail = _vector_store_unreachable_detail(exc)
+                if detail:
+                    raise HTTPException(status_code=503, detail=detail) from exc
+                raise
 
             cur.execute(
                 """

@@ -40,7 +40,7 @@ def create_vector_client(persist_directory: Path) -> Any:
 
         url = (os.getenv("QDRANT_URL") or "http://localhost:6333").strip()
         api_key = (os.getenv("QDRANT_API_KEY") or "").strip() or None
-        return QdrantClient(url=url, api_key=api_key)
+        return QdrantClient(url=url, api_key=api_key, check_compatibility=False)
 
     url = (os.getenv("CHROMA_URL") or os.getenv("CHROMA_SERVER_URL") or "").strip()
     if url:
