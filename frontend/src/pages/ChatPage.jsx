@@ -268,6 +268,22 @@ function normalizeMessageRow(m) {
     delete out.accuracy_score;
   }
   if (!out.accuracy_label) delete out.accuracy_label;
+  if (Array.isArray(out.retrieval_context)) {
+    out.retrieval_context = out.retrieval_context
+      .map((c) => String(c ?? "").trim())
+      .filter((c) => c.length > 0);
+  } else if (out.retrieval_context != null && typeof out.retrieval_context === "string") {
+    try {
+      const parsed = JSON.parse(out.retrieval_context);
+      out.retrieval_context = Array.isArray(parsed)
+        ? parsed.map((c) => String(c ?? "").trim()).filter((c) => c.length > 0)
+        : [];
+    } catch {
+      out.retrieval_context = [];
+    }
+  } else {
+    out.retrieval_context = [];
+  }
   return out;
 }
 
@@ -1103,12 +1119,36 @@ export default function ChatPage() {
     if (!chat?.id) return;
     try {
       const { data } = await api.get(`/chats/${chat.id}/messages`);
-      const rows = (data.messages || []).filter((message) => String(message?.content || "").trim().length > 0);
+      const rows = normalizeMessagesFromApi(
+        (data.messages || []).filter((message) => String(message?.content || "").trim().length > 0)
+      );
       const safeName = String(chat.title || `chat_${chat.id}`).replace(/[^a-z0-9]+/gi, "_").toLowerCase();
       let blob;
       let extension = "csv";
 
-      if (format === "md") {
+      if (format === "json") {
+        extension = "json";
+        const pairs = [];
+        let pendingQuestion = null;
+        for (const message of rows) {
+          const role = String(message.role || "").toLowerCase();
+          const content = String(message.content || "").trim();
+          if (role === "user") {
+            pendingQuestion = content;
+          } else if (role === "assistant" && pendingQuestion != null) {
+            const retrieval_context = Array.isArray(message.retrieval_context)
+              ? message.retrieval_context.map((c) => String(c ?? "").trim()).filter((c) => c.length > 0)
+              : [];
+            pairs.push({
+              input: pendingQuestion,
+              actual_output: content,
+              retrieval_context,
+            });
+            pendingQuestion = null;
+          }
+        }
+        blob = new Blob([JSON.stringify(pairs, null, 2)], { type: "application/json;charset=utf-8" });
+      } else if (format === "md") {
         extension = "md";
         const mdLines = [
           `# ${chat.title || `Chat ${chat.id}`}`,
@@ -1499,7 +1539,7 @@ export default function ChatPage() {
                 const selectedFormat = e.target.value;
                 setExportFormat(selectedFormat);
                 const currentChat = chats.find((chat) => chat.id === selectedChatId);
-                if (currentChat && (selectedFormat === "csv" || selectedFormat === "md")) {
+                if (currentChat && (selectedFormat === "csv" || selectedFormat === "md" || selectedFormat === "json")) {
                   exportChat(currentChat, selectedFormat);
                   setExportFormat("");
                 }
@@ -1509,6 +1549,7 @@ export default function ChatPage() {
               <option value="">Export Chat</option>
               <option value="csv">Export as CSV</option>
               <option value="md">Export as MD</option>
+              <option value="json">Export as JSON</option>
             </select>
           </div>
         </header>

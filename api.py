@@ -5,7 +5,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import jwt
@@ -215,6 +215,7 @@ def init_db():
                 "ALTER TABLE messages ADD COLUMN latency_seconds DOUBLE NULL DEFAULT NULL",
                 "ALTER TABLE messages ADD COLUMN accuracy_label VARCHAR(24) NULL DEFAULT NULL",
                 "ALTER TABLE messages ADD COLUMN accuracy_score INT NULL DEFAULT NULL",
+                "ALTER TABLE messages ADD COLUMN retrieval_context_json JSON NULL DEFAULT NULL",
             ):
                 try:
                     cur.execute(msg_col_sql)
@@ -298,6 +299,7 @@ class AssistantMessagePayload(BaseModel):
     latency_seconds: Optional[float] = None
     accuracy_label: Optional[str] = None
     accuracy_score: Optional[int] = None
+    retrieval_context: Optional[List[str]] = None
 
 
 class ChatPatchPayload(BaseModel):
@@ -308,6 +310,34 @@ class ChatPatchPayload(BaseModel):
 
 def sse_event(payload: Dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
+
+
+def retrieval_context_json_for_db(contexts: Optional[List[str]]) -> Optional[str]:
+    if not contexts:
+        return None
+    try:
+        return json.dumps([str(c) for c in contexts if c is not None], ensure_ascii=False)
+    except Exception:
+        return None
+
+
+def parse_stored_retrieval_context(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(x) for x in raw if str(x or "").strip()]
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        try:
+            data = json.loads(s)
+            if isinstance(data, list):
+                return [str(x) for x in data if str(x or "").strip()]
+        except Exception:
+            return []
+        return []
+    return []
 
 
 def chunk_text_for_stream(text: str, chunk_size: int = 12) -> List[str]:
@@ -701,12 +731,13 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 "INSERT INTO messages (chat_id, role, content) VALUES (%s, 'user', %s)",
                 (chat_id, question),
             )
+            ctx_json = retrieval_context_json_for_db(contexts)
             cur.execute(
                 """
-                INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score)
-                VALUES (%s, 'assistant', %s, %s, %s, %s, %s)
+                INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score, retrieval_context_json)
+                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s)
                 """,
-                (chat_id, answer, retrieval_seconds, elapsed, acc_label, acc_score),
+                (chat_id, answer, retrieval_seconds, elapsed, acc_label, acc_score, ctx_json),
             )
             if chat_id:
                 cur.execute(
@@ -885,12 +916,13 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 sep="\n",
                 flush=True,
             )
+            ctx_json = retrieval_context_json_for_db(contexts)
             with conn.cursor() as cur:
                 if replace_id and replace_assistant_message_id:
                     cur.execute(
                         """
                         UPDATE messages SET content=%s, retrieval_seconds=%s, latency_seconds=%s,
-                            accuracy_label=%s, accuracy_score=%s
+                            accuracy_label=%s, accuracy_score=%s, retrieval_context_json=%s
                         WHERE id=%s AND chat_id=%s
                         """,
                         (
@@ -899,6 +931,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                             total_latency,
                             acc_label,
                             acc_score,
+                            ctx_json,
                             replace_assistant_message_id,
                             chat_id,
                         ),
@@ -906,10 +939,10 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 else:
                     cur.execute(
                         """
-                        INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score)
-                        VALUES (%s, 'assistant', %s, %s, %s, %s, %s)
+                        INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score, retrieval_context_json)
+                        VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s)
                         """,
-                        (chat_id, final_answer, retrieval_seconds, total_latency, acc_label, acc_score),
+                        (chat_id, final_answer, retrieval_seconds, total_latency, acc_label, acc_score, ctx_json),
                     )
                 cur.execute(
                     "SELECT content FROM messages WHERE chat_id=%s AND role='user' ORDER BY id ASC LIMIT 8",
@@ -986,12 +1019,15 @@ def chat_messages(chat_id: int, user_id: int = Depends(auth_user)):
 
             cur.execute(
                 """
-                SELECT id, role, content, created_at, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score
+                SELECT id, role, content, created_at, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score, retrieval_context_json
                 FROM messages WHERE chat_id=%s ORDER BY id ASC
                 """,
                 (chat_id,),
             )
             messages = cur.fetchall()
+            for row in messages:
+                raw_ctx = row.pop("retrieval_context_json", None)
+                row["retrieval_context"] = parse_stored_retrieval_context(raw_ctx)
         return {"messages": messages}
     finally:
         conn.close()
@@ -1086,10 +1122,11 @@ def save_assistant_message(chat_id: int, payload: AssistantMessagePayload, user_
             if not chat:
                 raise HTTPException(status_code=404, detail="Chat not found.")
 
+            ctx_json = retrieval_context_json_for_db(payload.retrieval_context)
             cur.execute(
                 """
-                INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score)
-                VALUES (%s, 'assistant', %s, %s, %s, %s, %s)
+                INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score, retrieval_context_json)
+                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     chat_id,
@@ -1098,6 +1135,7 @@ def save_assistant_message(chat_id: int, payload: AssistantMessagePayload, user_
                     payload.latency_seconds,
                     payload.accuracy_label,
                     payload.accuracy_score,
+                    ctx_json,
                 ),
             )
         return {"message": "Assistant message saved."}
