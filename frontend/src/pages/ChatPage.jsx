@@ -140,6 +140,22 @@ function IconCopy({ className = "", ...rest }) {
   );
 }
 
+function IconPlay({ className = "", ...rest }) {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden
+      {...rest}
+    >
+      <path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11.04-6.86a1 1 0 0 0 0-1.72L9.5 4.28A1 1 0 0 0 8 5.14z" />
+    </svg>
+  );
+}
+
 function IconStop({ className = "", ...rest }) {
   return (
     <svg
@@ -242,6 +258,164 @@ function isChatPinned(chat) {
   return chat?.pinned_at != null && chat.pinned_at !== "";
 }
 
+function normalizeRetrievalContext(raw) {
+  if (Array.isArray(raw)) {
+    return raw.map((c) => String(c ?? "").trim()).filter((c) => c.length > 0);
+  }
+  if (raw != null && typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? parsed.map((c) => String(c ?? "").trim()).filter((c) => c.length > 0)
+        : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function getPrecedingUserInput(messages, assistantIndex) {
+  for (let i = assistantIndex - 1; i >= 0; i--) {
+    if (String(messages[i]?.role || "").toLowerCase() === "user") {
+      return String(messages[i].content || "").trim();
+    }
+  }
+  return "";
+}
+
+function buildEvalCasePayload({ input, actualOutput, retrievalContext }) {
+  return {
+    input: String(input ?? "").trim(),
+    actual_output: String(actualOutput ?? "").trim(),
+    expected_output: "",
+    retrieval_context: normalizeRetrievalContext(retrievalContext),
+  };
+}
+
+function AssistantRetrievalSources({ chunks }) {
+  const items = normalizeRetrievalContext(chunks);
+  if (!items.length) return null;
+  return (
+    <details className="retrieval-sources">
+      <summary className="retrieval-sources-summary">
+        Retrieved sources ({items.length})
+      </summary>
+      <ol className="retrieval-sources-list">
+        {items.map((chunk, index) => (
+          <li key={index} className="retrieval-sources-item">
+            <div className="retrieval-sources-item-label">Chunk {index + 1}</div>
+            <pre className="retrieval-sources-chunk">{chunk}</pre>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+function AssistantEvalCaseJson({ input, actualOutput, retrievalContext, onCopy }) {
+  const payload = buildEvalCasePayload({ input, actualOutput, retrievalContext });
+  if (!payload.actual_output) return null;
+  const jsonText = JSON.stringify(payload, null, 2);
+  const [testing, setTesting] = useState(false);
+  const [testResults, setTestResults] = useState(null);
+  const [testError, setTestError] = useState("");
+  return (
+    <details className="retrieval-sources eval-case-json">
+      <summary className="retrieval-sources-summary eval-case-json-summary">
+        <span className="eval-case-json-summary-label">Eval case JSON</span>
+        <div className="eval-case-json-actions">
+          <button
+            type="button"
+            className={`eval-case-json-test-btn${testing ? " is-loading" : ""}`}
+            disabled={testing}
+            onClick={async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (testing) return;
+              setTesting(true);
+              setTestError("");
+              setTestResults(null);
+              try {
+                const { data } = await api.post("/eval/run", payload, { timeout: 0 });
+                setTestResults(Array.isArray(data?.results) ? data.results : []);
+              } catch (err) {
+                const detail = err?.response?.data?.detail;
+                setTestError(String(detail || err?.message || "Eval failed"));
+              } finally {
+                setTesting(false);
+              }
+            }}
+            aria-label="Run eval test case"
+            title="Run DeepEval metrics"
+          >
+            {testing ? (
+              <>
+                <span className="eval-case-json-test-spinner" aria-hidden />
+                <span>Running…</span>
+              </>
+            ) : (
+              <>
+                <IconPlay className="eval-case-json-test-icon" />
+                <span>Test</span>
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            className="eval-case-json-copy-btn"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onCopy?.(jsonText);
+            }}
+            aria-label="Copy eval case JSON"
+            title="Copy JSON"
+          >
+            <IconCopy className="eval-case-json-copy-icon" />
+          </button>
+        </div>
+      </summary>
+      <pre className="eval-case-json-body">{jsonText}</pre>
+      {testError ? <div className="eval-case-json-test-error">{testError}</div> : null}
+      {Array.isArray(testResults) ? (
+        <div className="eval-case-json-test-results">
+          {testResults.length ? (
+            <ul className="eval-case-json-test-results-list">
+              {testResults.map((r, i) => {
+                const name = String(r?.name || "Metric");
+                const success = Boolean(r?.success);
+                const score =
+                  typeof r?.score === "number" && Number.isFinite(r.score) ? r.score.toFixed(4) : "n/a";
+                const threshold =
+                  typeof r?.threshold === "number" && Number.isFinite(r.threshold)
+                    ? r.threshold.toFixed(4)
+                    : "n/a";
+                const reason = String(r?.reason || "").trim();
+                const error = String(r?.error || "").trim();
+                return (
+                  <li key={`${name}-${i}`} className="eval-case-json-test-results-item">
+                    <div className="eval-case-json-test-results-row">
+                      <span className="eval-case-json-test-metric-name">{name}</span>
+                      <span className="eval-case-json-test-metric-score">
+                        score={score} threshold={threshold} [{success ? "PASS" : "FAIL"}]
+                      </span>
+                    </div>
+                    {reason ? <div className="eval-case-json-test-metric-reason">reason: {reason}</div> : null}
+                    {error ? <div className="eval-case-json-test-metric-error">error: {error}</div> : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="eval-case-json-test-results-empty">No results.</div>
+          )}
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
 /** Coerce DB / JSON types so each assistant row can show retrieval & accuracy after reload. */
 function normalizeMessageRow(m) {
   if (!m || typeof m !== "object") return m;
@@ -268,22 +442,7 @@ function normalizeMessageRow(m) {
     delete out.accuracy_score;
   }
   if (!out.accuracy_label) delete out.accuracy_label;
-  if (Array.isArray(out.retrieval_context)) {
-    out.retrieval_context = out.retrieval_context
-      .map((c) => String(c ?? "").trim())
-      .filter((c) => c.length > 0);
-  } else if (out.retrieval_context != null && typeof out.retrieval_context === "string") {
-    try {
-      const parsed = JSON.parse(out.retrieval_context);
-      out.retrieval_context = Array.isArray(parsed)
-        ? parsed.map((c) => String(c ?? "").trim()).filter((c) => c.length > 0)
-        : [];
-    } catch {
-      out.retrieval_context = [];
-    }
-  } else {
-    out.retrieval_context = [];
-  }
+  out.retrieval_context = normalizeRetrievalContext(out.retrieval_context);
   return out;
 }
 
@@ -709,6 +868,10 @@ export default function ChatPage() {
             base.accuracy_label = merge.accuracy_label;
             base.accuracy_score = merge.accuracy_score;
           }
+          const mergedCtx = normalizeRetrievalContext(merge.retrieval_context);
+          if (mergedCtx.length && !normalizeRetrievalContext(base.retrieval_context).length) {
+            base.retrieval_context = mergedCtx;
+          }
           rows[lastAi] = base;
         }
         lastStreamAssistantMetaRef.current = null;
@@ -822,11 +985,15 @@ export default function ChatPage() {
                 ? Number(payload.retrieval_seconds)
                 : undefined;
             const mergedRs = rs !== undefined ? rs : undefined;
+            const retrieval_context = normalizeRetrievalContext(
+              payload.contexts ?? payload.retrieval_context
+            );
             lastStreamAssistantMetaRef.current = {
               retrieval_seconds: mergedRs,
               latency_seconds: serverLat,
               accuracy_label: accuracy.label,
               accuracy_score: accuracy.score,
+              retrieval_context,
             };
             setMessages((prev) =>
               prev.map((msg) =>
@@ -838,6 +1005,7 @@ export default function ChatPage() {
                       retrieval_seconds: mergedRs !== undefined ? mergedRs : msg.retrieval_seconds,
                       accuracy_label: accuracy.label,
                       accuracy_score: accuracy.score,
+                      retrieval_context,
                     }
                   : msg
               )
@@ -1136,14 +1304,14 @@ export default function ChatPage() {
           if (role === "user") {
             pendingQuestion = content;
           } else if (role === "assistant" && pendingQuestion != null) {
-            const retrieval_context = Array.isArray(message.retrieval_context)
-              ? message.retrieval_context.map((c) => String(c ?? "").trim()).filter((c) => c.length > 0)
-              : [];
-            pairs.push({
-              input: pendingQuestion,
-              actual_output: content,
-              retrieval_context,
-            });
+            const retrieval_context = normalizeRetrievalContext(message.retrieval_context);
+            pairs.push(
+              buildEvalCasePayload({
+                input: pendingQuestion,
+                actualOutput: content,
+                retrievalContext: retrieval_context,
+              })
+            );
             pendingQuestion = null;
           }
         }
@@ -1562,7 +1730,7 @@ export default function ChatPage() {
                 (message) =>
                   String(message?.content || "").trim().length > 0 || isStreamPlaceholderMessage(message)
               )
-              .map((message, index) => (
+              .map((message, index, visibleMessages) => (
               <div
                 key={message.id || index}
                 className={[
@@ -1673,10 +1841,21 @@ export default function ChatPage() {
                   ) : (
                     <div className="bubble">{message.content}</div>
                   )}
-                  {message.role === "assistant" && (() => {
-                    const metaLine = formatAssistantMetrics(message);
-                    return metaLine ? <div className="message-meta">{metaLine}</div> : null;
-                  })()}
+                  {message.role === "assistant" && (
+                    <>
+                      {(() => {
+                        const metaLine = formatAssistantMetrics(message);
+                        return metaLine ? <div className="message-meta">{metaLine}</div> : null;
+                      })()}
+                      <AssistantRetrievalSources chunks={message.retrieval_context} />
+                      <AssistantEvalCaseJson
+                        input={getPrecedingUserInput(visibleMessages, index)}
+                        actualOutput={message.content}
+                        retrievalContext={message.retrieval_context}
+                        onCopy={copyToClipboard}
+                      />
+                    </>
+                  )}
                 </div>
               </div>
               ))

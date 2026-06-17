@@ -13,6 +13,7 @@ import numpy as np
 import pymysql
 import uvicorn
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -306,6 +307,14 @@ class ChatPatchPayload(BaseModel):
     title: Optional[str] = None
     pinned: Optional[bool] = None
     archived: Optional[bool] = None
+
+
+class EvalCasePayload(BaseModel):
+    input: str
+    actual_output: str
+    expected_output: Optional[str] = ""
+    retrieval_context: Optional[List[str]] = None
+    context: Optional[List[str]] = None
 
 
 def sse_event(payload: Dict) -> str:
@@ -1141,6 +1150,17 @@ def save_assistant_message(chat_id: int, payload: AssistantMessagePayload, user_
         return {"message": "Assistant message saved."}
     finally:
         conn.close()
+
+
+@app.post("/api/eval/run")
+async def run_eval_case(payload: EvalCasePayload, user_id: int = Depends(auth_user)):
+    # Import on demand so the API can start even if eval deps
+    # aren't needed in some environments.
+    from eval_runner import run_eval
+
+    row = payload.model_dump()
+    results = await run_in_threadpool(run_eval, [row])
+    return {"results": results}
 
 
 @app.on_event("startup")

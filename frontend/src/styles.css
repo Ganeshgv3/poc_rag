@@ -1647,6 +1647,285 @@ body {
   color: var(--text-muted);
 }
 
+.retrieval-sources {
+  margin-top: 8px;
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.35);
+  overflow: hidden;
+}
+
+.retrieval-sources-summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.retrieval-sources-summary::-webkit-details-marker {
+  display: none;
+}
+
+.retrieval-sources-summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.retrieval-sources[open] .retrieval-sources-summary::before {
+  transform: rotate(90deg);
+}
+
+.retrieval-sources-summary:hover {
+  color: var(--text);
+}
+
+.retrieval-sources-list {
+  margin: 0;
+  padding: 0 12px 10px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.retrieval-sources-item {
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  padding-top: 8px;
+}
+
+.retrieval-sources-item:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.retrieval-sources-item-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.9);
+  margin-bottom: 4px;
+}
+
+.retrieval-sources-chunk {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.45);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(226, 232, 240, 0.92);
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.eval-case-json-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.eval-case-json-summary-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.eval-case-json-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eval-case-json-test-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 4px 10px 4px 8px;
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.28) 0%, rgba(139, 92, 246, 0.22) 100%);
+  color: #eef2ff;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease,
+    opacity 0.15s ease;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
+}
+
+.eval-case-json-test-btn:hover:not(:disabled) {
+  border-color: rgba(129, 140, 248, 0.75);
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.42) 0%, rgba(139, 92, 246, 0.34) 100%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+    0 4px 14px rgba(99, 102, 241, 0.25);
+  transform: translateY(-1px);
+}
+
+.eval-case-json-test-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.eval-case-json-test-btn:disabled,
+.eval-case-json-test-btn.is-loading {
+  opacity: 0.72;
+  cursor: wait;
+}
+
+.eval-case-json-test-icon {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+.eval-case-json-test-spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(238, 242, 255, 0.25);
+  border-top-color: #eef2ff;
+  border-radius: 50%;
+  animation: eval-case-json-spin 0.7s linear infinite;
+}
+
+@keyframes eval-case-json-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.eval-case-json-copy-btn {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 4px 6px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 6px;
+  background: rgba(2, 6, 23, 0.5);
+  color: rgba(226, 232, 240, 0.9);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.eval-case-json-copy-btn:hover {
+  border-color: rgba(99, 102, 241, 0.45);
+  background: rgba(99, 102, 241, 0.15);
+  color: #fff;
+}
+
+.eval-case-json-copy-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.eval-case-json-body {
+  margin: 0;
+  padding: 0 12px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(226, 232, 240, 0.92);
+  max-height: 320px;
+  overflow: auto;
+}
+
+.eval-case-json-test-error {
+  margin: 0 12px 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: rgba(127, 29, 29, 0.25);
+  color: #fecaca;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.eval-case-json-test-results {
+  margin: 0 12px 12px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(2, 6, 23, 0.35);
+}
+
+.eval-case-json-test-results-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.eval-case-json-test-results-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.eval-case-json-test-results-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 10px;
+}
+
+.eval-case-json-test-metric-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.eval-case-json-test-metric-score {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 10px;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.eval-case-json-test-metric-reason,
+.eval-case-json-test-metric-error {
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.eval-case-json-test-metric-error {
+  color: #fca5a5;
+}
+
+.eval-case-json-test-results-empty {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.85);
+}
+
 .copy-answer-btn {
   position: absolute;
   top: -10px;

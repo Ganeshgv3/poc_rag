@@ -1,0 +1,726 @@
+S No,Question,Answer,JSON,,Status
+,Interest Only Features for Expanded Prime program?,"Bring assets sourced or seasoned 30 days (gift funds allowed). Bring a Clear Capital AVM for any file with an LTV score >2.5 (AVM confidence >87% and FSD <0.13) and a full second appraisal for loan amounts > $2,000,000. \n\nMandatory Expanded Prime IO limits: max IO LTV 80% (Purchase 80%; Refinance 70%), min loan $100,000, max $3,500,000, min FICO 720, max DTI 55%, residual income $2,500, mortgage history 1x30x12. \n\nEligible properties: SFR, PUD, townhomes (row homes ineligible), condos (including non‑warrantable), 2–4 unit and rural — max LTV for 2–4 units and non‑warrantable condos is 80%; reduce maximum LTV by 5% in a declining market. \n\nNote: DTI >50% is allowed only for primary residences (requires min FICO 700 and max LTV/CLTV 80%) and CLTV equals grid maximum for institutional seconds; the matrix does not specify IO term/amortization or months-of-reserves.\n\n---\n**Sources**\n[1] DHM WS Equity Advantage Matrices (17) p.3\n[2] Deephaven Whsl 5-9 Unit Guidelines p.9\n[3] DH WHSL Guidelines p.83\n[4] DH WHSL Jumbo Prime p.15\n[5] DHM WHSL Jumbo Matrix p.1\n[6] DHM WHSL Matrices_Super Jumbo PDF p.1\n[7] DHM WHSL Matrices_Expanded (6) p.1\n[8] WHSL Matrices_DSCR Combined (16) p.2\n[9] DH WHSL Equity Advantage HELOC Matrix (3) p.1\n[10] DHM WS Equity Advantage Matrices (17) p.2\n[11] DH WHSL Guidelines p.184\n[12] DH WHSL Jumbo Prime p.14\n[13] DHM WS Equity Advantage Matrices (17) p.1\n[14] DHM WHSL Matrices_NonPrime (1) p.1\n[15] DH WHSL Guidelines p.41\n[16] DHM WHSL Matrices_ITIN PDF p.1\n[17] DH WHSL Jumbo Prime p.36\n[18] DH WHSL Guidelines p.25\n[19] WHSL Matrices_DSCR Combined (16) p.3\n[20] DH WHSL Jumbo Prime p.37\n[21] DH WHSL Guidelines p.167\n[22] DH WHSL Guidelines p.123\n[23] DH WHSL Jumbo Prime p.13\n[24] WHSL Matrices_DSCR Combined (16) p.1\n[25] DH WHSL Jumbo Prime p.40\n[26] DH WHSL Guidelines p.104\n[27] DH WHSL Jumbo Prime p.11\n[28] DH WHSL Jumbo Prime p.18\n[29] DH WHSL Jumbo Prime p.19\n[30] DH WHSL Jumbo Prime p.12\n[31] DH WHSL Jumbo Prime p.22\n[32] DH WHSL BPL Guidelines 05.05.2026 FINAL p.31","[
+    ""Deephaven DHM WS Equity Advantage Matrices_17 — Page 3 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Maximum Loan Amount: Not specified\n- Minimum Debt Service Coverage Ratio (DSCR): 1.00x\n- Foreclosure, Deed-in-Lieu, and Short Sale (BK/FC/SS/DIL) seasoning requirement: 84 months\n- Bankruptcy ("",
+    ""Deephaven Deephaven Whsl 5-9 Unit Guidelines — Page 9 Key Points:\n\n- Ineligible properties: Refer to the Appendix for a list of ineligible property types.\n  \n**Insurance Requirements:**\n- Property insurance coverage must be in the amount of:\n  - 100% of the insurable value of improvements, as establ"",
+    ""Deephaven DH WHSL Guidelines — Page 83 Key Points:\n\n- Asset Utilization may be used to determine qualifying income under the Expanded Prime Program only.\n- Asset Utilization is not permitted for cash-out transactions, ITIN (Individual Taxpayer Identification Number) borrowers, or under the Expanded "",
+    ""Deephaven DH WHSL Jumbo Prime — Page 15 Key Points:\n  \n- Eligible transaction types include purchases.\n- Purchases must adhere to agency guidelines.\n- Loan-to-Value (LTV) and Combined Loan-to-Value (CLTV) ratios are calculated using the lesser of the purchase price or the appraised value of the subj"",
+    ""Deephaven DHM WHSL Jumbo Matrix — Page 1 Key Points:\n\n- Minimum Loan Amount: Agency Limit + $1\n- Maximum Loan Amount: $3,000,000\n- Maximum Cash Out: $500,000\n- Mortgage History requirement: Zero 30-day lates in 24 months (0x30x24)\n- Foreclosure, Deed-in-Lieu, and Short Sale (FC/DIL/SS) seasoning req"",
+    ""Deephaven DHM WHSL Matrices_Super Jumbo — Page 1 Key Points:\n\n- Minimum Loan Amount: $3,500,000\n- Maximum Loan Amount: $5,000,000\n- Maximum Cash-Out Amount: $1,000,000\n- Mortgage History requirement: Zero 30-day lates in 24 months (0x30x24)\n- Bankruptcy (BK) seasoning requirement (all chapters): 48 "",
+    ""Deephaven DHM WHSL Matrices_Expanded (6) — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $3,500,000\n- Maximum Loan-to-Value (LTV) ratio for Interest-Only: 80%\n- Maximum Cash-Out LTVs:\n  - Less than or equal to 65%: Unlimited\n  - Greater than 65%: $500,000\n- Maximum Cash-"",
+    ""Deephaven WHSL Matrices_DSCR Combined_16 — Page 2 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Maximum Loan Amount: Not specified\n- Minimum Debt Service Coverage Ratio (DSCR): 1.00x\n- Foreclosure, Deed-in-Lieu, and Short Sale (FC/DIL/SS) seasoning requirement: 84 months\n- Bankruptcy (BK) seas"",
+    ""Deephaven DH WHSL Equity Advantage HELOC Matrix (3) — Page 1 Key Points:\n\n**Loan Amounts and Occupancy Types:**\n- Maximum Loan Amount for 1st Lien:\n  - Primary Residence: 80% \n  - Second Home: 75% \n  - Investment: 70%\n- Maximum Loan Amount for 2nd Lien:\n  - Primary Residence: 90% \n  - Second Home: 8"",
+    ""Deephaven DHM WS Equity Advantage Matrices_17 — Page 2 Key Points:\n\n- Minimum Loan Amount: $50,000\n- Maximum Loan Amount: $500,000\n- Maximum Cash Out: 90% for Rate and Term refinance (R/T) and Cash-Out refinance (C/O)\n- Maximum Debt-to-Income (DTI) ratio: 43%\n- Foreclosure (FC), Deed-in-Lieu (DIL), "",
+    ""Deephaven DH WHSL Guidelines — Page 184 Key Points:\n  \n- Eligible property types:\n  - Single-Family Residence: Yes\n  - Planned Unit Development (PUD): Yes\n  - Townhomes: Yes\n  - 2-4 Unit Multi-Family Properties: Yes\n  - Site Condominiums: Yes\n  - Condominium (low-rise and high-rise): Yes\n  - Non-War"",
+    ""Deephaven DH WHSL Jumbo Prime — Page 14 Key Points:\n\n- **Occupancy Requirements:**\n  - **Primary Residence:**\n    - A primary residence is defined as the property the borrower occupies as their principal residence.\n    - At least one borrower must occupy, be on title to the property, and execute the"",
+    ""Deephaven DHM WS Equity Advantage Matrices_17 — Page 1 Key Points:\n\n- Minimum Loan Amount: $50,000\n- Maximum Loan Amount: $1,000,000\n- Maximum Cash Out: $750,000\n- Maximum Debt-to-Income (DTI) ratio: 43%\n- Mortgage History requirement: Zero 30-day lates in 12 months (0x30x12)\n- Bankruptcy (BK), Fore"",
+    ""Deephaven DHM WHSL Matrices_NonPrime (1) — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $2,000,000\n- Maximum Cash Out: $500,000\n- Residual Income requirement: $1,500\n- Foreclosure, Short Sale, and Deed-in-Lieu (FC/SS/DIL) seasoning requirement: 84 months\n- Standard maxi"",
+    ""Deephaven DH WHSL Guidelines — Page 41 Key Points:\n\n- Expanded Prime Super Jumbo program is available for:\n  - Purchase transactions\n  - Rate/Term refinance (R/T)\n  - Cash-Out refinance (C/O)\n  - Primary residence occupancy\n\n### Borrower and Credit Requirements\n- Eligible borrowers: U.S. Citizens an"",
+    ""Deephaven DHM WHSL Matrices_ITIN PDF — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $1,500,000\n- Maximum Cash Out: $500,000\n- Mortgage/Rental History requirement: Zero 30-day lates in 12 months (0x30x12)\n- Foreclosure, Short Sale, Deed-in-Lieu, and Bankruptcy (FC/SS/DIL"",
+    ""Deephaven DH WHSL Jumbo Prime — Page 36 Key Points:\n- Eligible property types include:\n  - 1-4 units attached/detached owner-occupied properties\n  - 1-unit second homes\n  - 1-4 unit non-owner occupied properties\n  - Planned Unit Development (PUD)\n- Maximum lot size: 20 acres\n  - Properties with grea"",
+    ""Deephaven DH WHSL Guidelines — Page 25 Key Points:\n\n**Restrictions on Texas Home Equity Loans:**\n- Texas Home Equity loans may not be refinanced more than once a year (greater than 12 months).\n- There can be only one outstanding 50(a)(6) loan on a property at any given time.\n- If the borrower has an"",
+    ""Deephaven WHSL Matrices_DSCR Combined_16 — Page 3 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Maximum Loan Amount: Not specified\n- Maximum Cash-Out amount: $500,000\n- Minimum Debt Service Coverage Ratio (DSCR): Not specified\n- Interest Only Mortgage History: Not specified\n- Foreclosure, Shor"",
+    ""Deephaven DH WHSL Jumbo Prime — Page 37 Key Points:\n\n- Ineligible property types include:\n  - Manufactured Homes\n  - Factory-built housing\n  - Properties with income-producing attributes\n  - Condo hotel units\n  - Co-Ops\n  - Log homes\n  - Non-Warrantable condominiums\n  - Condominiums with Homeowners "",
+    ""Deephaven DH WHSL Guidelines — Page 167 Key Points:\n\n- The Equity Advantage Program allows for:\n  - Rate/Term refinance of primary residences\n  - Cash-Out refinance of primary residences\n  - Rate/Term refinance of second homes\n  - Cash-Out refinance of second homes\n  - Rate/Term refinance of investm"",
+    ""Deephaven DH WHSL Guidelines — Page 123 Key Points:\n  \n- Eligible property types:\n  - Single-Family Residence: Yes\n  - Planned Unit Development (PUD): Yes\n  - Townhomes: Yes\n  - 2-4 Unit Multi-Family Properties: Yes\n  - Condominium (low-rise and high-rise): Yes\n  - Log Homes: Yes\n  - Modular Homes: "",
+    ""Deephaven DH WHSL Jumbo Prime — Page 13 Key Points:\n\n**4.2 Ineligible Borrowers:**\n- Borrowers with only an Individual Taxpayer Identification Number (ITIN) are ineligible.\n- Irrevocable trusts are ineligible.\n- Corporations, limited partnerships, general partnerships, and limited liability companie"",
+    ""Deephaven WHSL Matrices_DSCR Combined_16 — Page 1 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Minimum Loan Amount for Debt Service Coverage Ratio (DSCR) < 1.00x: Not specified\n- Maximum Loan Amount: Not specified\n- Maximum Cash-Out:\n  - Loan-to-Value ratio (LTV) ≤ 65%: $1,000,000\n  - LTV > 6"",
+    ""Deephaven DH WHSL Jumbo Prime — Page 40 Key Points:\n  \n- Temporary buydown mortgage loans are not eligible for purchase.\n  \n- Mortgage loans with prepayment penalties are not eligible for purchase.\n  \n- Interested party contributions include funds contributed by the property seller, builder, develop"",
+    ""Deephaven DH WHSL Guidelines — Page 104 Key Points:\n\n- Maximum Debt-to-Income (DTI) ratio allowed for most programs: 50%\n- Maximum DTI for the Expanded Prime Super Jumbo Program: 35%\n- DTI greater than 50% and less than or equal to 55% is allowed under the following conditions:\n  - Applicable only t"",
+    ""Deephaven DH WHSL Jumbo Prime — Page 11 Key Points:\n  \n- Non-Permanent Resident Aliens must be legally present in the U.S. with an acceptable visa type, which includes:\n  - E Series (E-1, E-2, E-3)\n  - G Series (G-1, G-2, G-3, G-4, G-5)\n  - H Series (H-1B, H-1C)\n  - L Series (L-1, L-1A, L-1B, Spouse"",
+    ""Deephaven DH WHSL Jumbo Prime — Page 18 Key Points:\n\n- Delayed financing refinance eligibility:\n  - Borrowers must have purchased the subject property for cash within 180 days from the date of the application.\n  - Cashback to the borrower in excess of the original purchase price or appraised value ("",
+    ""Deephaven DH WHSL Jumbo Prime — Page 19 Key Points:\n- Non-Arm's Length Transactions: All parties involved in a transaction should be independent of one another. If a direct relationship exists between the parties, the transaction is considered a non-arm's length transaction, making the related loan "",
+    ""Deephaven DH WHSL Jumbo Prime — Page 12 Key Points:\n\n- First-time homebuyer definition: A borrower who has not had an ownership interest in a property within the last 3 years from the application date.\n  - Eligible properties: Owner-occupied primary residences only.\n  - Maximum Loan-to-Value (LTV) a"",
+    ""Deephaven DH WHSL Jumbo Prime — Page 22 Key Points:\n\n**Modifications**\n- Only lender-initiated modifications on owner-occupied properties are allowed, with proof that they were not caused by a distress situation.\n- The borrower must have made 48 consecutive months of timely mortgage payments on the "",
+    ""Deephaven DH WHSL BPL Guidelines 05.05.2026 FINAL — Page 31 Key Points:\n\n**Property Requirements:**\n- Must contain a kitchen and a bathroom.\n- Must have a minimum of 600 square feet of gross living area.\n- Bedroom(s) must be separate from the main living area.\n- Must be heated by a continuously fuel""
+  ]",,Fail
+,Minimum Loan Amount for Expanded Prime program?,"Minimum loan amount for the Expanded Prime program is $100,000. Loans under $100,000 are not eligible.","{
+    ""answer"": ""Minimum loan amount for the Expanded Prime program is $100,000. Loans under $100,000 are not eligible.\n\n---\n**Sources**\n[1] DHM WS Equity Advantage Matrices (17) p.1\n[2] DHM WHSL Matrices_Super Jumbo PDF p.1\n[3] DHM WS Equity Advantage Matrices (17) p.3\n[4] DHM WHSL Jumbo Matrix p.1\n[5] DHM WHSL Matrices_Expanded (6) p.1\n[6] DHM WS Equity Advantage Matrices (17) p.2\n[7] WHSL Matrices_DSCR Combined (16) p.2\n[8] WHSL Matrices_DSCR Combined (16) p.1\n[9] WHSL Matrices_DSCR Combined (16) p.3\n[10] DHM WHSL Matrices_NonPrime (1) p.1\n[11] DH WHSL Equity Advantage HELOC Matrix (3) p.1\n[12] DHM WHSL Matrices_ITIN PDF p.1"",
+    ""question"": ""Minimum Loan Amount for Expanded Prime program?"",
+    ""lender_ids"": [
+        9
+    ],
+    ""pipeline"": ""decomposition"",
+    ""embedding_version"": ""v2-rechunk-2026"",
+    ""has_qa_override"": false,
+    ""exclude_qa"": false,
+    ""latency_ms"": 32407,
+    ""sources"": [
+        {
+            ""citation_index"": 1,
+            ""lender_id"": 9,
+            ""program_document_id"": 2164,
+            ""doc_name"": ""DHM WS Equity Advantage Matrices (17)"",
+            ""page_number"": 1,
+            ""score"": 0.0082,
+            ""snippet"": ""Deephaven DHM WS Equity Advantage Matrices_17 — Page 1 Key Points:\n\n- Minimum Loan Amount: $50,000\n- Maximum Loan Amount: $1,000,000\n- Maximum Cash Out: $750,000\n- Maximum Debt-to-Income (DTI) ratio: 43%\n- Mortgage History requirement: Zero 30-day lates in 12 months (0x30x12)\n- Bankruptcy (BK), Fore""
+        },
+        {
+            ""citation_index"": 2,
+            ""lender_id"": 9,
+            ""program_document_id"": 2165,
+            ""doc_name"": ""DHM WHSL Matrices_Super Jumbo PDF"",
+            ""page_number"": 1,
+            ""score"": 0.0081,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_Super Jumbo — Page 1 Key Points:\n\n- Minimum Loan Amount: $3,500,000\n- Maximum Loan Amount: $5,000,000\n- Maximum Cash-Out Amount: $1,000,000\n- Mortgage History requirement: Zero 30-day lates in 24 months (0x30x24)\n- Bankruptcy (BK) seasoning requirement (all chapters): 48 ""
+        },
+        {
+            ""citation_index"": 3,
+            ""lender_id"": 9,
+            ""program_document_id"": 2164,
+            ""doc_name"": ""DHM WS Equity Advantage Matrices (17)"",
+            ""page_number"": 3,
+            ""score"": 0.0079,
+            ""snippet"": ""Deephaven DHM WS Equity Advantage Matrices_17 — Page 3 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Maximum Loan Amount: Not specified\n- Minimum Debt Service Coverage Ratio (DSCR): 1.00x\n- Foreclosure, Deed-in-Lieu, and Short Sale (BK/FC/SS/DIL) seasoning requirement: 84 months\n- Bankruptcy (""
+        },
+        {
+            ""citation_index"": 4,
+            ""lender_id"": 9,
+            ""program_document_id"": 2159,
+            ""doc_name"": ""DHM WHSL Jumbo Matrix"",
+            ""page_number"": 1,
+            ""score"": 0.0078,
+            ""snippet"": ""Deephaven DHM WHSL Jumbo Matrix — Page 1 Key Points:\n\n- Minimum Loan Amount: Agency Limit + $1\n- Maximum Loan Amount: $3,000,000\n- Maximum Cash Out: $500,000\n- Mortgage History requirement: Zero 30-day lates in 24 months (0x30x24)\n- Foreclosure, Deed-in-Lieu, and Short Sale (FC/DIL/SS) seasoning req""
+        },
+        {
+            ""citation_index"": 5,
+            ""lender_id"": 9,
+            ""program_document_id"": 2161,
+            ""doc_name"": ""DHM WHSL Matrices_Expanded (6)"",
+            ""page_number"": 1,
+            ""score"": 0.0077,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_Expanded (6) — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $3,500,000\n- Maximum Loan-to-Value (LTV) ratio for Interest-Only: 80%\n- Maximum Cash-Out LTVs:\n  - Less than or equal to 65%: Unlimited\n  - Greater than 65%: $500,000\n- Maximum Cash-""
+        },
+        {
+            ""citation_index"": 6,
+            ""lender_id"": 9,
+            ""program_document_id"": 2164,
+            ""doc_name"": ""DHM WS Equity Advantage Matrices (17)"",
+            ""page_number"": 2,
+            ""score"": 0.0076,
+            ""snippet"": ""Deephaven DHM WS Equity Advantage Matrices_17 — Page 2 Key Points:\n\n- Minimum Loan Amount: $50,000\n- Maximum Loan Amount: $500,000\n- Maximum Cash Out: 90% for Rate and Term refinance (R/T) and Cash-Out refinance (C/O)\n- Maximum Debt-to-Income (DTI) ratio: 43%\n- Foreclosure (FC), Deed-in-Lieu (DIL), ""
+        },
+        {
+            ""citation_index"": 7,
+            ""lender_id"": 9,
+            ""program_document_id"": 2160,
+            ""doc_name"": ""WHSL Matrices_DSCR Combined (16)"",
+            ""page_number"": 2,
+            ""score"": 0.0075,
+            ""snippet"": ""Deephaven WHSL Matrices_DSCR Combined_16 — Page 2 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Maximum Loan Amount: Not specified\n- Minimum Debt Service Coverage Ratio (DSCR): 1.00x\n- Foreclosure, Deed-in-Lieu, and Short Sale (FC/DIL/SS) seasoning requirement: 84 months\n- Bankruptcy (BK) seas""
+        },
+        {
+            ""citation_index"": 8,
+            ""lender_id"": 9,
+            ""program_document_id"": 2160,
+            ""doc_name"": ""WHSL Matrices_DSCR Combined (16)"",
+            ""page_number"": 1,
+            ""score"": 0.0074,
+            ""snippet"": ""Deephaven WHSL Matrices_DSCR Combined_16 — Page 1 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Minimum Loan Amount for Debt Service Coverage Ratio (DSCR) < 1.00x: Not specified\n- Maximum Loan Amount: Not specified\n- Maximum Cash-Out:\n  - Loan-to-Value ratio (LTV) ≤ 65%: $1,000,000\n  - LTV > 6""
+        },
+        {
+            ""citation_index"": 9,
+            ""lender_id"": 9,
+            ""program_document_id"": 2160,
+            ""doc_name"": ""WHSL Matrices_DSCR Combined (16)"",
+            ""page_number"": 3,
+            ""score"": 0.0072,
+            ""snippet"": ""Deephaven WHSL Matrices_DSCR Combined_16 — Page 3 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Maximum Loan Amount: Not specified\n- Maximum Cash-Out amount: $500,000\n- Minimum Debt Service Coverage Ratio (DSCR): Not specified\n- Interest Only Mortgage History: Not specified\n- Foreclosure, Shor""
+        },
+        {
+            ""citation_index"": 10,
+            ""lender_id"": 9,
+            ""program_document_id"": 2163,
+            ""doc_name"": ""DHM WHSL Matrices_NonPrime (1)"",
+            ""page_number"": 1,
+            ""score"": 0.0071,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_NonPrime (1) — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $2,000,000\n- Maximum Cash Out: $500,000\n- Residual Income requirement: $1,500\n- Foreclosure, Short Sale, and Deed-in-Lieu (FC/SS/DIL) seasoning requirement: 84 months\n- Standard maxi""
+        },
+        {
+            ""citation_index"": 11,
+            ""lender_id"": 9,
+            ""program_document_id"": 2156,
+            ""doc_name"": ""DH WHSL Equity Advantage HELOC Matrix (3)"",
+            ""page_number"": 1,
+            ""score"": 0.007,
+            ""snippet"": ""Deephaven DH WHSL Equity Advantage HELOC Matrix (3) — Page 1 Key Points:\n\n**Loan Amounts and Occupancy Types:**\n- Maximum Loan Amount for 1st Lien:\n  - Primary Residence: 80% \n  - Second Home: 75% \n  - Investment: 70%\n- Maximum Loan Amount for 2nd Lien:\n  - Primary Residence: 90% \n  - Second Home: 8""
+        },
+        {
+            ""citation_index"": 12,
+            ""lender_id"": 9,
+            ""program_document_id"": 2162,
+            ""doc_name"": ""DHM WHSL Matrices_ITIN PDF"",
+            ""page_number"": 1,
+            ""score"": 0.0069,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_ITIN PDF — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $1,500,000\n- Maximum Cash Out: $500,000\n- Mortgage/Rental History requirement: Zero 30-day lates in 12 months (0x30x12)\n- Foreclosure, Short Sale, Deed-in-Lieu, and Bankruptcy (FC/SS/DIL""
+        }
+    ]
+}",,Pass
+,BK/FC/DIL/SS Seasoning for Expanded Prime program?,"Bring bankruptcy papers to show the property was surrendered (if applicable). All bankruptcies must be discharged or dismissed at least 48 months prior to loan closing; if property was surrendered in a Chapter 7, use the bankruptcy discharge date for seasoning. Foreclosure, deed‑in‑lieu, and short sale require a minimum 48‑month seasoning from loan closing, measured from the date of completed sale or final property transfer, and the Housing Event must be completed prior to closing with no outstanding deficiency balance (the foreclosure action itself does not have to be fully complete for seasoning purposes). 120‑day mortgage lates are seasoned from the date the mortgage was brought current, modifications are seasoned from the modification execution date, and there are no FICO‑ or occupancy‑based exceptions to these Expanded Prime requirements","{
+    ""answer"": ""Bring bankruptcy papers to show the property was surrendered (if applicable). All bankruptcies must be discharged or dismissed at least 48 months prior to loan closing; if property was surrendered in a Chapter 7, use the bankruptcy discharge date for seasoning. Foreclosure, deed‑in‑lieu, and short sale require a minimum 48‑month seasoning from loan closing, measured from the date of completed sale or final property transfer, and the Housing Event must be completed prior to closing with no outstanding deficiency balance (the foreclosure action itself does not have to be fully complete for seasoning purposes). 120‑day mortgage lates are seasoned from the date the mortgage was brought current, modifications are seasoned from the modification execution date, and there are no FICO‑ or occupancy‑based exceptions to these Expanded Prime requirements.\n\n---\n**Sources**\n[1] DH WHSL Guidelines p.63\n[2] DH WHSL Guidelines p.65\n[3] DHM WS Equity Advantage Matrices (17) p.1\n[4] DH WHSL Guidelines p.169\n[5] DH WHSL Guidelines p.64\n[6] WHSL Matrices_DSCR Combined (16) p.3\n[7] DHM WS Equity Advantage Matrices (17) p.2\n[8] DH WHSL Guidelines p.168\n[9] DH WHSL Guidelines p.180\n[10] WHSL Matrices_DSCR Combined (16) p.2\n[11] WHSL Matrices_DSCR Combined (16) p.1\n[12] DH WHSL Jumbo Prime p.14\n[13] DH WHSL BPL Guidelines 05.05.2026 FINAL p.21\n[14] DHM WHSL Matrices_Super Jumbo PDF p.1\n[15] DHM WS Equity Advantage Matrices (17) p.3\n[16] DH WHSL Guidelines p.41\n[17] DH WHSL Jumbo Prime p.22\n[18] DH WHSL BPL Guidelines 05.05.2026 FINAL p.20\n[19] DHM WHSL Matrices_NonPrime (1) p.1\n[20] DH WHSL Jumbo Prime p.11\n[21] DH WHSL Jumbo Prime p.16\n[22] DHM WHSL Jumbo Matrix p.1\n[23] DH WHSL Guidelines p.167\n[24] DH WHSL Guidelines p.179\n[25] DH WHSL Jumbo Prime p.13\n[26] DH WHSL Jumbo Prime p.3\n[27] DH WHSL Guidelines p.104\n[28] DH WHSL Guidelines p.60\n[29] DHM WHSL Matrices_Expanded (6) p.1\n[30] DH WHSL Jumbo Prime p.4\n[31] DH WHSL Equity Advantage HELOC Matrix (3) p.1\n[32] DH WHSL BPL Guidelines 05.05.2026 FINAL p.22\n[33] Deephaven Whsl 5-9 Unit Guidelines p.7\n[34] DHM WHSL Matrices_ITIN PDF p.1\n[35] DH WHSL BPL Guidelines 05.05.2026 FINAL p.19\n[36] DH WHSL Jumbo Prime p.32\n[37] DH WHSL Guidelines p.5\n[38] DH WHSL Jumbo Prime p.18"",
+    ""question"": ""BK/FC/DIL/SS Seasoning for Expanded Prime program?"",
+    ""lender_ids"": [
+        9
+    ],
+    ""pipeline"": ""decomposition"",
+    ""embedding_version"": ""v2-rechunk-2026"",
+    ""has_qa_override"": false,
+    ""exclude_qa"": false,
+    ""latency_ms"": 77007,
+    ""sources"": [
+        {
+            ""citation_index"": 1,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 63,
+            ""score"": 1.0,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 63 Key Points:\n\n- All judgments or liens affecting title must be paid to ensure the title insures the lender's lien position without exception.\n- Court-ordered judgments may remain open if one of the following conditions is met:\n  - The amount is the lesser of $5,""
+        },
+        {
+            ""citation_index"": 2,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 65,
+            ""score"": 1.0,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 65 Key Points:\n\n- Installment debt is defined as a monthly obligation with fixed payments and terms.\n  - Payments on installment loans must be included in the borrower’s Debt-to-Income (DTI) ratio.\n  - Payments can be excluded if there are 10 or fewer monthly paym""
+        },
+        {
+            ""citation_index"": 3,
+            ""lender_id"": 9,
+            ""program_document_id"": 2164,
+            ""doc_name"": ""DHM WS Equity Advantage Matrices (17)"",
+            ""page_number"": 1,
+            ""score"": 1.0,
+            ""snippet"": ""Deephaven DHM WS Equity Advantage Matrices_17 — Page 1 Key Points:\n\n- Minimum Loan Amount: $50,000\n- Maximum Loan Amount: $1,000,000\n- Maximum Cash Out: $750,000\n- Maximum Debt-to-Income (DTI) ratio: 43%\n- Mortgage History requirement: Zero 30-day lates in 12 months (0x30x12)\n- Bankruptcy (BK), Fore""
+        },
+        {
+            ""citation_index"": 4,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 169,
+            ""score"": 1.0,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 169 Key Points:\n  \n- Cash-Out Refinance definition: A refinance that does not meet the Rate and Term (R/T) refinance definition, including:\n  - A refinance where the borrower receives cash from the transaction.\n  - Refinancing an open-ended subordinate lien that d""
+        },
+        {
+            ""citation_index"": 5,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 64,
+            ""score"": 0.0082,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 64 Key Points:\n\n**Bankruptcy Requirements:**\n- Expanded Prime Program: All bankruptcies must be discharged or dismissed for a minimum of 48 months from the closing date.\n- Non-Prime Program: All bankruptcies must be discharged or dismissed for a minimum of 0 to 24""
+        },
+        {
+            ""citation_index"": 6,
+            ""lender_id"": 9,
+            ""program_document_id"": 2160,
+            ""doc_name"": ""WHSL Matrices_DSCR Combined (16)"",
+            ""page_number"": 3,
+            ""score"": 0.0082,
+            ""snippet"": ""Deephaven WHSL Matrices_DSCR Combined_16 — Page 3 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Maximum Loan Amount: Not specified\n- Maximum Cash-Out amount: $500,000\n- Minimum Debt Service Coverage Ratio (DSCR): Not specified\n- Interest Only Mortgage History: Not specified\n- Foreclosure, Shor""
+        },
+        {
+            ""citation_index"": 7,
+            ""lender_id"": 9,
+            ""program_document_id"": 2164,
+            ""doc_name"": ""DHM WS Equity Advantage Matrices (17)"",
+            ""page_number"": 2,
+            ""score"": 0.0082,
+            ""snippet"": ""Deephaven DHM WS Equity Advantage Matrices_17 — Page 2 Key Points:\n\n- Minimum Loan Amount: $50,000\n- Maximum Loan Amount: $500,000\n- Maximum Cash Out: 90% for Rate and Term refinance (R/T) and Cash-Out refinance (C/O)\n- Maximum Debt-to-Income (DTI) ratio: 43%\n- Foreclosure (FC), Deed-in-Lieu (DIL), ""
+        },
+        {
+            ""citation_index"": 8,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 168,
+            ""score"": 0.0082,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 168 Key Points:\n\n- No ownership seasoning is required for a primary residence.\n- If ownership seasoning is less than 6 months, a 10% Combined Loan-to-Value (CLTV) reduction will apply.\n- A minimum of 6 months ownership seasoning is required for second homes.\n- A m""
+        },
+        {
+            ""citation_index"": 9,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 180,
+            ""score"": 0.0081,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 180 Key Points:\n\n**Housing Events:**\n- A Housing Event includes:\n  - Foreclosure\n  - Deed-in-Lieu\n  - Short Sale\n  - Modification\n  - One 120-day mortgage late\n- Housing Events must be seasoned for a minimum of 48 months from loan closing.\n- Under Equity Advantage""
+        },
+        {
+            ""citation_index"": 10,
+            ""lender_id"": 9,
+            ""program_document_id"": 2160,
+            ""doc_name"": ""WHSL Matrices_DSCR Combined (16)"",
+            ""page_number"": 2,
+            ""score"": 0.0081,
+            ""snippet"": ""Deephaven WHSL Matrices_DSCR Combined_16 — Page 2 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Maximum Loan Amount: Not specified\n- Minimum Debt Service Coverage Ratio (DSCR): 1.00x\n- Foreclosure, Deed-in-Lieu, and Short Sale (FC/DIL/SS) seasoning requirement: 84 months\n- Bankruptcy (BK) seas""
+        },
+        {
+            ""citation_index"": 11,
+            ""lender_id"": 9,
+            ""program_document_id"": 2160,
+            ""doc_name"": ""WHSL Matrices_DSCR Combined (16)"",
+            ""page_number"": 1,
+            ""score"": 0.0081,
+            ""snippet"": ""Deephaven WHSL Matrices_DSCR Combined_16 — Page 1 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Minimum Loan Amount for Debt Service Coverage Ratio (DSCR) < 1.00x: Not specified\n- Maximum Loan Amount: Not specified\n- Maximum Cash-Out:\n  - Loan-to-Value ratio (LTV) ≤ 65%: $1,000,000\n  - LTV > 6""
+        },
+        {
+            ""citation_index"": 12,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 14,
+            ""score"": 0.0081,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 14 Key Points:\n\n- **Occupancy Requirements:**\n  - **Primary Residence:**\n    - A primary residence is defined as the property the borrower occupies as their principal residence.\n    - At least one borrower must occupy, be on title to the property, and execute the""
+        },
+        {
+            ""citation_index"": 13,
+            ""lender_id"": 9,
+            ""program_document_id"": 2155,
+            ""doc_name"": ""DH WHSL BPL Guidelines 05.05.2026 FINAL"",
+            ""page_number"": 21,
+            ""score"": 0.0079,
+            ""snippet"": ""Deephaven DH WHSL BPL Guidelines 05.05.2026 FINAL — Page 21 Key Points:\n\n**Credit Analysis**\n- Seasoning of a foreclosure, deed-in-lieu, or short sale is measured from the date of completed sale or final property transfer. The Housing Event must be completed prior to loan closing with no outstanding""
+        },
+        {
+            ""citation_index"": 14,
+            ""lender_id"": 9,
+            ""program_document_id"": 2165,
+            ""doc_name"": ""DHM WHSL Matrices_Super Jumbo PDF"",
+            ""page_number"": 1,
+            ""score"": 0.0079,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_Super Jumbo — Page 1 Key Points:\n\n- Minimum Loan Amount: $3,500,000\n- Maximum Loan Amount: $5,000,000\n- Maximum Cash-Out Amount: $1,000,000\n- Mortgage History requirement: Zero 30-day lates in 24 months (0x30x24)\n- Bankruptcy (BK) seasoning requirement (all chapters): 48 ""
+        },
+        {
+            ""citation_index"": 15,
+            ""lender_id"": 9,
+            ""program_document_id"": 2164,
+            ""doc_name"": ""DHM WS Equity Advantage Matrices (17)"",
+            ""page_number"": 3,
+            ""score"": 0.0079,
+            ""snippet"": ""Deephaven DHM WS Equity Advantage Matrices_17 — Page 3 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Maximum Loan Amount: Not specified\n- Minimum Debt Service Coverage Ratio (DSCR): 1.00x\n- Foreclosure, Deed-in-Lieu, and Short Sale (BK/FC/SS/DIL) seasoning requirement: 84 months\n- Bankruptcy (""
+        },
+        {
+            ""citation_index"": 16,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 41,
+            ""score"": 0.0079,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 41 Key Points:\n\n- Expanded Prime Super Jumbo program is available for:\n  - Purchase transactions\n  - Rate/Term refinance (R/T)\n  - Cash-Out refinance (C/O)\n  - Primary residence occupancy\n\n### Borrower and Credit Requirements\n- Eligible borrowers: U.S. Citizens an""
+        },
+        {
+            ""citation_index"": 17,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 22,
+            ""score"": 0.0078,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 22 Key Points:\n\n**Modifications**\n- Only lender-initiated modifications on owner-occupied properties are allowed, with proof that they were not caused by a distress situation.\n- The borrower must have made 48 consecutive months of timely mortgage payments on the ""
+        },
+        {
+            ""citation_index"": 18,
+            ""lender_id"": 9,
+            ""program_document_id"": 2155,
+            ""doc_name"": ""DH WHSL BPL Guidelines 05.05.2026 FINAL"",
+            ""page_number"": 20,
+            ""score"": 0.0077,
+            ""snippet"": ""Deephaven DH WHSL BPL Guidelines 05.05.2026 FINAL — Page 20 Key Points:\n\n**Credit Analysis**\n- A statement must explain the circumstances of any lawsuit or litigation and discuss the borrower’s or guarantor’s liability and insurance coverage.\n- The title company must be informed of the lawsuit or li""
+        },
+        {
+            ""citation_index"": 19,
+            ""lender_id"": 9,
+            ""program_document_id"": 2163,
+            ""doc_name"": ""DHM WHSL Matrices_NonPrime (1)"",
+            ""page_number"": 1,
+            ""score"": 0.0077,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_NonPrime (1) — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $2,000,000\n- Maximum Cash Out: $500,000\n- Residual Income requirement: $1,500\n- Foreclosure, Short Sale, and Deed-in-Lieu (FC/SS/DIL) seasoning requirement: 84 months\n- Standard maxi""
+        },
+        {
+            ""citation_index"": 20,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 11,
+            ""score"": 0.0077,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 11 Key Points:\n  \n- Non-Permanent Resident Aliens must be legally present in the U.S. with an acceptable visa type, which includes:\n  - E Series (E-1, E-2, E-3)\n  - G Series (G-1, G-2, G-3, G-4, G-5)\n  - H Series (H-1B, H-1C)\n  - L Series (L-1, L-1A, L-1B, Spouse""
+        },
+        {
+            ""citation_index"": 21,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 16,
+            ""score"": 0.0076,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 16 Key Points:\n  \n- Minimum seasoning requirement of 6 months from the note date of the new transaction is required if the previous refinance was a Cash-Out refinance, including the payoff of a non-seasoned subordinate lien.\n- For properties purchased more than 6""
+        },
+        {
+            ""citation_index"": 22,
+            ""lender_id"": 9,
+            ""program_document_id"": 2159,
+            ""doc_name"": ""DHM WHSL Jumbo Matrix"",
+            ""page_number"": 1,
+            ""score"": 0.0076,
+            ""snippet"": ""Deephaven DHM WHSL Jumbo Matrix — Page 1 Key Points:\n\n- Minimum Loan Amount: Agency Limit + $1\n- Maximum Loan Amount: $3,000,000\n- Maximum Cash Out: $500,000\n- Mortgage History requirement: Zero 30-day lates in 24 months (0x30x24)\n- Foreclosure, Deed-in-Lieu, and Short Sale (FC/DIL/SS) seasoning req""
+        },
+        {
+            ""citation_index"": 23,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 167,
+            ""score"": 0.0076,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 167 Key Points:\n\n- The Equity Advantage Program allows for:\n  - Rate/Term refinance of primary residences\n  - Cash-Out refinance of primary residences\n  - Rate/Term refinance of second homes\n  - Cash-Out refinance of second homes\n  - Rate/Term refinance of investm""
+        },
+        {
+            ""citation_index"": 24,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 179,
+            ""score"": 0.0074,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 179 Key Points:\n\n- Lawsuit or pending litigation: If the application, title, or credit documents reveal that the borrower is presently involved in a lawsuit or pending litigation, the loan is ineligible.\n  \n- Consumer Credit Counseling Service (CCCS): Consumer Cre""
+        },
+        {
+            ""citation_index"": 25,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 13,
+            ""score"": 0.0074,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 13 Key Points:\n\n**4.2 Ineligible Borrowers:**\n- Borrowers with only an Individual Taxpayer Identification Number (ITIN) are ineligible.\n- Irrevocable trusts are ineligible.\n- Corporations, limited partnerships, general partnerships, and limited liability companie""
+        },
+        {
+            ""citation_index"": 26,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 3,
+            ""score"": 0.0072,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 3 Key Points:\n- Effective date of guidelines: February 5, 2024\n- Section 6: Rate and Term Refinance\n- Section 6.3: Cash-Out Refinance\n- Section 6.4: Continuity of Obligation\n- Section 6.5: Delayed Financing Refinance\n- Section 6.6: Contract for Deed/Land Contract""
+        },
+        {
+            ""citation_index"": 27,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 104,
+            ""score"": 0.0072,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 104 Key Points:\n\n- Maximum Debt-to-Income (DTI) ratio allowed for most programs: 50%\n- Maximum DTI for the Expanded Prime Super Jumbo Program: 35%\n- DTI greater than 50% and less than or equal to 55% is allowed under the following conditions:\n  - Applicable only t""
+        },
+        {
+            ""citation_index"": 28,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 60,
+            ""score"": 0.0071,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 60 Key Points:\n\n- Borrowers without a complete 12-month housing history are subject to the following restrictions:\n  - Primary residence and second homes only\n  - Minimum 6 months reserves after closing\n  - 10% minimum borrower contribution\n  - Payment Shock is no""
+        },
+        {
+            ""citation_index"": 29,
+            ""lender_id"": 9,
+            ""program_document_id"": 2161,
+            ""doc_name"": ""DHM WHSL Matrices_Expanded (6)"",
+            ""page_number"": 1,
+            ""score"": 0.0071,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_Expanded (6) — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $3,500,000\n- Maximum Loan-to-Value (LTV) ratio for Interest-Only: 80%\n- Maximum Cash-Out LTVs:\n  - Less than or equal to 65%: Unlimited\n  - Greater than 65%: $500,000\n- Maximum Cash-""
+        },
+        {
+            ""citation_index"": 30,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 4,
+            ""score"": 0.007,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 4 Key Points:\n- Effective date of guidelines: February 5, 2024\n- Section 8: Unacceptable Income\n- Section 9: Debts and Liabilities\n  - 9.1: Debt-to-Income (DTI) Ratio\n  - 9.2: Installment Debt\n  - 9.3: Revolving Debt\n  - 9.4: Home Equity Line of Credit (HELOC)\n  ""
+        },
+        {
+            ""citation_index"": 31,
+            ""lender_id"": 9,
+            ""program_document_id"": 2156,
+            ""doc_name"": ""DH WHSL Equity Advantage HELOC Matrix (3)"",
+            ""page_number"": 1,
+            ""score"": 0.007,
+            ""snippet"": ""Deephaven DH WHSL Equity Advantage HELOC Matrix (3) — Page 1 Key Points:\n\n**Loan Amounts and Occupancy Types:**\n- Maximum Loan Amount for 1st Lien:\n  - Primary Residence: 80% \n  - Second Home: 75% \n  - Investment: 70%\n- Maximum Loan Amount for 2nd Lien:\n  - Primary Residence: 90% \n  - Second Home: 8""
+        },
+        {
+            ""citation_index"": 32,
+            ""lender_id"": 9,
+            ""program_document_id"": 2155,
+            ""doc_name"": ""DH WHSL BPL Guidelines 05.05.2026 FINAL"",
+            ""page_number"": 22,
+            ""score"": 0.007,
+            ""snippet"": ""Deephaven DH WHSL BPL Guidelines 05.05.2026 FINAL — Page 22 Key Points:\n\n**Short-Term Rental Income Guidelines:**\n- Short-term rentals are properties leased on a nightly, weekly, monthly, or seasonal basis.\n- Short-term rental income from home-sharing services (such as Airbnb or VRBO) or property ma""
+        },
+        {
+            ""citation_index"": 33,
+            ""lender_id"": 9,
+            ""program_document_id"": 2154,
+            ""doc_name"": ""Deephaven Whsl 5-9 Unit Guidelines"",
+            ""page_number"": 7,
+            ""score"": 0.0069,
+            ""snippet"": ""Deephaven Deephaven Whsl 5-9 Unit Guidelines — Page 7 Key Points:\n\n**Evidence of Primary Residence**\n- All Borrowers and Guarantors must maintain a primary residence; evidence of primary occupancy is required.\n- Borrowers living rent-free may be considered on a case-by-case basis with compelling evi""
+        },
+        {
+            ""citation_index"": 34,
+            ""lender_id"": 9,
+            ""program_document_id"": 2162,
+            ""doc_name"": ""DHM WHSL Matrices_ITIN PDF"",
+            ""page_number"": 1,
+            ""score"": 0.0069,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_ITIN PDF — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $1,500,000\n- Maximum Cash Out: $500,000\n- Mortgage/Rental History requirement: Zero 30-day lates in 12 months (0x30x12)\n- Foreclosure, Short Sale, Deed-in-Lieu, and Bankruptcy (FC/SS/DIL""
+        },
+        {
+            ""citation_index"": 35,
+            ""lender_id"": 9,
+            ""program_document_id"": 2155,
+            ""doc_name"": ""DH WHSL BPL Guidelines 05.05.2026 FINAL"",
+            ""page_number"": 19,
+            ""score"": 0.0068,
+            ""snippet"": ""Deephaven DH WHSL BPL Guidelines 05.05.2026 FINAL — Page 19 Key Points:\n\n- Student loans can be counted as tradelines if they are in repayment and not deferred.\n  \n**Evidence of Primary Residence:**\n- All borrowers or guarantors must own or rent a primary residence.\n- Evidence of primary occupancy i""
+        },
+        {
+            ""citation_index"": 36,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 32,
+            ""score"": 0.0068,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 32 Key Points:\n- Conversion of a departing residence to investment property guidelines:\n  - Rental income from the departing residence may be used if the borrower has a Loan-to-Value (LTV) ratio of 75% or less, as evidenced by one of the following:\n    - A curren""
+        },
+        {
+            ""citation_index"": 37,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 5,
+            ""score"": 0.0068,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 5 Key Points:\n- Effective date of guidelines: 05.05.2026\n- Section 5.3: Credit Score Requirements\n- Section 5.4: Tradeline Requirements\n  - 5.4.1: Standard Tradelines\n  - 5.4.2: Limited Tradelines\n  - 5.4.3: Insufficient Tradelines/Non-Traditional Credit\n- Section""
+        },
+        {
+            ""citation_index"": 38,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 18,
+            ""score"": 0.0068,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 18 Key Points:\n\n- Delayed financing refinance eligibility:\n  - Borrowers must have purchased the subject property for cash within 180 days from the date of the application.\n  - Cashback to the borrower in excess of the original purchase price or appraised value (""
+        }
+    ]
+}",,Pass
+,Ineligible States for Expanded Prime program?,"
+Hard no — Expanded Prime is not available for properties in Massachusetts, West Virginia, New York, Hawaii (lava zones 1 & 2), and Baltimore City, MD. Do not submit loans for properties located in any of those geographies.","{
+    ""answer"": ""Hard no — Expanded Prime is not available for properties in Massachusetts, West Virginia, New York, Hawaii (lava zones 1 & 2), and Baltimore City, MD. Do not submit loans for properties located in any of those geographies.\n\n---\n**Sources**\n[1] DH WHSL Guidelines p.16\n[2] DH WHSL Guidelines p.64\n[3] DHM WHSL Matrices_Super Jumbo PDF p.1\n[4] DHM WHSL Matrices_Expanded (6) p.1\n[5] DH WHSL Guidelines p.17\n[6] DHM WS Equity Advantage Matrices (17) p.3\n[7] DH WHSL Guidelines p.54\n[8] DHM WHSL Matrices_ITIN PDF p.1\n[9] DH WHSL Guidelines p.41\n[10] DH WHSL Guidelines p.18\n[11] WHSL Matrices_DSCR Combined (16) p.2\n[12] DH WHSL Jumbo Prime p.13\n[13] DHM WHSL Matrices_NonPrime (1) p.1\n[14] DH WHSL Guidelines p.167\n[15] DH WHSL Guidelines p.174\n[16] DH WHSL Guidelines p.104\n[17] DH WHSL Jumbo Prime p.18\n[18] DH WHSL Jumbo Prime p.7\n[19] DH WHSL Jumbo Prime p.36\n[20] DH WHSL Guidelines p.46\n[21] DH WHSL Guidelines p.123\n[22] DH WHSL Jumbo Prime p.40"",
+    ""question"": ""Ineligible States for Expanded Prime program?"",
+    ""lender_ids"": [
+        9
+    ],
+    ""pipeline"": ""decomposition"",
+    ""embedding_version"": ""v2-rechunk-2026"",
+    ""has_qa_override"": false,
+    ""exclude_qa"": false,
+    ""latency_ms"": 43850,
+    ""sources"": [
+        {
+            ""citation_index"": 1,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 16,
+            ""score"": 1.0,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 16 Key Points:\n- The primary focus of the lending program is the borrower’s ability to repay the mortgage obligation.\n- Loans originated by Deephaven Mortgage should be affordable to the borrower in pursuit of homeownership.\n- Under the Ability-to-Repay (ATR) stan""
+        },
+        {
+            ""citation_index"": 2,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 64,
+            ""score"": 1.0,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 64 Key Points:\n\n**Bankruptcy Requirements:**\n- Expanded Prime Program: All bankruptcies must be discharged or dismissed for a minimum of 48 months from the closing date.\n- Non-Prime Program: All bankruptcies must be discharged or dismissed for a minimum of 0 to 24""
+        },
+        {
+            ""citation_index"": 3,
+            ""lender_id"": 9,
+            ""program_document_id"": 2165,
+            ""doc_name"": ""DHM WHSL Matrices_Super Jumbo PDF"",
+            ""page_number"": 1,
+            ""score"": 0.016,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_Super Jumbo — Page 1 Key Points:\n\n- Minimum Loan Amount: $3,500,000\n- Maximum Loan Amount: $5,000,000\n- Maximum Cash-Out Amount: $1,000,000\n- Mortgage History requirement: Zero 30-day lates in 24 months (0x30x24)\n- Bankruptcy (BK) seasoning requirement (all chapters): 48 ""
+        },
+        {
+            ""citation_index"": 4,
+            ""lender_id"": 9,
+            ""program_document_id"": 2161,
+            ""doc_name"": ""DHM WHSL Matrices_Expanded (6)"",
+            ""page_number"": 1,
+            ""score"": 0.0158,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_Expanded (6) — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $3,500,000\n- Maximum Loan-to-Value (LTV) ratio for Interest-Only: 80%\n- Maximum Cash-Out LTVs:\n  - Less than or equal to 65%: Unlimited\n  - Greater than 65%: $500,000\n- Maximum Cash-""
+        },
+        {
+            ""citation_index"": 5,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 17,
+            ""score"": 0.0082,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 17 Key Points:\n  \n- Loan programs offered by Deephaven include:\n  - Expanded Prime Program\n  - Non-Prime Program\n  - Expanded Prime Super Jumbo Program\n  - Individual Taxpayer Identification Number (ITIN) Program\n  - Equity Advantage Program\n\n- Documentation types""
+        },
+        {
+            ""citation_index"": 6,
+            ""lender_id"": 9,
+            ""program_document_id"": 2164,
+            ""doc_name"": ""DHM WS Equity Advantage Matrices (17)"",
+            ""page_number"": 3,
+            ""score"": 0.0082,
+            ""snippet"": ""Deephaven DHM WS Equity Advantage Matrices_17 — Page 3 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Maximum Loan Amount: Not specified\n- Minimum Debt Service Coverage Ratio (DSCR): 1.00x\n- Foreclosure, Deed-in-Lieu, and Short Sale (BK/FC/SS/DIL) seasoning requirement: 84 months\n- Bankruptcy (""
+        },
+        {
+            ""citation_index"": 7,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 54,
+            ""score"": 0.0081,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 54 Key Points:\n  \n- There is no limit on the number of other properties borrowers may currently have financed.\n- For transactions involving a second home, 2 months of additional reserves are required for each financed property.\n- Deephaven Mortgage exposure may no""
+        },
+        {
+            ""citation_index"": 8,
+            ""lender_id"": 9,
+            ""program_document_id"": 2162,
+            ""doc_name"": ""DHM WHSL Matrices_ITIN PDF"",
+            ""page_number"": 1,
+            ""score"": 0.0081,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_ITIN PDF — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $1,500,000\n- Maximum Cash Out: $500,000\n- Mortgage/Rental History requirement: Zero 30-day lates in 12 months (0x30x12)\n- Foreclosure, Short Sale, Deed-in-Lieu, and Bankruptcy (FC/SS/DIL""
+        },
+        {
+            ""citation_index"": 9,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 41,
+            ""score"": 0.0079,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 41 Key Points:\n\n- Expanded Prime Super Jumbo program is available for:\n  - Purchase transactions\n  - Rate/Term refinance (R/T)\n  - Cash-Out refinance (C/O)\n  - Primary residence occupancy\n\n### Borrower and Credit Requirements\n- Eligible borrowers: U.S. Citizens an""
+        },
+        {
+            ""citation_index"": 10,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 18,
+            ""score"": 0.0078,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 18 Key Points:\n  \n- Total points, fees, and Annual Percentage Rate (APR) may not exceed current state and federal high-cost thresholds.\n- Prepayment penalties on primary residence and second home transactions are prohibited.\n- States may impose different definitio""
+        },
+        {
+            ""citation_index"": 11,
+            ""lender_id"": 9,
+            ""program_document_id"": 2160,
+            ""doc_name"": ""WHSL Matrices_DSCR Combined (16)"",
+            ""page_number"": 2,
+            ""score"": 0.0078,
+            ""snippet"": ""Deephaven WHSL Matrices_DSCR Combined_16 — Page 2 Key Points:\n\n- Minimum Loan Amount: Not specified\n- Maximum Loan Amount: Not specified\n- Minimum Debt Service Coverage Ratio (DSCR): 1.00x\n- Foreclosure, Deed-in-Lieu, and Short Sale (FC/DIL/SS) seasoning requirement: 84 months\n- Bankruptcy (BK) seas""
+        },
+        {
+            ""citation_index"": 12,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 13,
+            ""score"": 0.0077,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 13 Key Points:\n\n**4.2 Ineligible Borrowers:**\n- Borrowers with only an Individual Taxpayer Identification Number (ITIN) are ineligible.\n- Irrevocable trusts are ineligible.\n- Corporations, limited partnerships, general partnerships, and limited liability companie""
+        },
+        {
+            ""citation_index"": 13,
+            ""lender_id"": 9,
+            ""program_document_id"": 2163,
+            ""doc_name"": ""DHM WHSL Matrices_NonPrime (1)"",
+            ""page_number"": 1,
+            ""score"": 0.0077,
+            ""snippet"": ""Deephaven DHM WHSL Matrices_NonPrime (1) — Page 1 Key Points:\n\n- Minimum Loan Amount: $100,000\n- Maximum Loan Amount: $2,000,000\n- Maximum Cash Out: $500,000\n- Residual Income requirement: $1,500\n- Foreclosure, Short Sale, and Deed-in-Lieu (FC/SS/DIL) seasoning requirement: 84 months\n- Standard maxi""
+        },
+        {
+            ""citation_index"": 14,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 167,
+            ""score"": 0.0076,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 167 Key Points:\n\n- The Equity Advantage Program allows for:\n  - Rate/Term refinance of primary residences\n  - Cash-Out refinance of primary residences\n  - Rate/Term refinance of second homes\n  - Cash-Out refinance of second homes\n  - Rate/Term refinance of investm""
+        },
+        {
+            ""citation_index"": 15,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 174,
+            ""score"": 0.0075,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 174 Key Points:\n- Ineligible borrowers include:\n  - Non-occupant co-borrowers\n  - Co-signer(s)\n  - Foreign Nationals (FN)\n  - Individual Taxpayer Identification Number (ITIN) borrowers\n  - Borrowers with diplomatic immunity or otherwise excluded from U.S. jurisdic""
+        },
+        {
+            ""citation_index"": 16,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 104,
+            ""score"": 0.0074,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 104 Key Points:\n\n- Maximum Debt-to-Income (DTI) ratio allowed for most programs: 50%\n- Maximum DTI for the Expanded Prime Super Jumbo Program: 35%\n- DTI greater than 50% and less than or equal to 55% is allowed under the following conditions:\n  - Applicable only t""
+        },
+        {
+            ""citation_index"": 17,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 18,
+            ""score"": 0.0072,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 18 Key Points:\n\n- Delayed financing refinance eligibility:\n  - Borrowers must have purchased the subject property for cash within 180 days from the date of the application.\n  - Cashback to the borrower in excess of the original purchase price or appraised value (""
+        },
+        {
+            ""citation_index"": 18,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 7,
+            ""score"": 0.0071,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 7 Key Points:\n- The primary focus of the Deephaven Jumbo Prime lending program is the borrower’s ability to repay the mortgage obligation.\n- Loans must be affordable to the borrower in pursuit of homeownership.\n- Under the Ability-to-Repay (ATR) standard, lenders""
+        },
+        {
+            ""citation_index"": 19,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 36,
+            ""score"": 0.007,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 36 Key Points:\n- Eligible property types include:\n  - 1-4 units attached/detached owner-occupied properties\n  - 1-unit second homes\n  - 1-4 unit non-owner occupied properties\n  - Planned Unit Development (PUD)\n- Maximum lot size: 20 acres\n  - Properties with grea""
+        },
+        {
+            ""citation_index"": 20,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 46,
+            ""score"": 0.0069,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 46 Key Points:\n\n- Individual Taxpayer Identification Number (ITIN) borrowers are individuals with an ITIN who reside and work within the United States but do not possess U.S. citizenship. \n- Citizens of Venezuela are ineligible for Deephaven programs.\n\n**Verificat""
+        },
+        {
+            ""citation_index"": 21,
+            ""lender_id"": 9,
+            ""program_document_id"": 2157,
+            ""doc_name"": ""DH WHSL Guidelines"",
+            ""page_number"": 123,
+            ""score"": 0.0068,
+            ""snippet"": ""Deephaven DH WHSL Guidelines — Page 123 Key Points:\n  \n- Eligible property types:\n  - Single-Family Residence: Yes\n  - Planned Unit Development (PUD): Yes\n  - Townhomes: Yes\n  - 2-4 Unit Multi-Family Properties: Yes\n  - Condominium (low-rise and high-rise): Yes\n  - Log Homes: Yes\n  - Modular Homes: ""
+        },
+        {
+            ""citation_index"": 22,
+            ""lender_id"": 9,
+            ""program_document_id"": 2158,
+            ""doc_name"": ""DH WHSL Jumbo Prime"",
+            ""page_number"": 40,
+            ""score"": 0.0068,
+            ""snippet"": ""Deephaven DH WHSL Jumbo Prime — Page 40 Key Points:\n  \n- Temporary buydown mortgage loans are not eligible for purchase.\n  \n- Mortgage loans with prepayment penalties are not eligible for purchase.\n  \n- Interested party contributions include funds contributed by the property seller, builder, develop""
+        }
+    ]
+}",,Pass
