@@ -18,7 +18,7 @@ from env_load import load_dotenv_for_project
 from rag_metrics import accuracy_from_signals
 from rag_pipeline import run_pdf_rag_sync
 from rag_routing import is_small_talk
-from text_chunking import chunk_text, extract_text
+from text_chunking import extract_and_chunk
 
 
 BASE_DIR = Path(__file__).parent
@@ -121,19 +121,19 @@ def ingest_pdf(
         return False, f"Already indexed: {already_exists['filename']}"
 
     emit_progress(20, "Extracting text...")
-    text = extract_text(pdf_bytes)
-    if not text:
+    emit_progress(35, "Extracting text and tables...")
+    text_chunks = extract_and_chunk(pdf_bytes)
+    if not text_chunks:
         emit_progress(100, "Extraction failed.")
         return False, "Could not extract text from this PDF."
 
     emit_progress(40, "Creating chunks...")
-    chunks = chunk_text(text)
-    if not chunks:
-        emit_progress(100, "Chunking failed.")
-        return False, "No valid text chunks found."
+    chunk_bodies = [tc.text for tc in text_chunks]
+    table_n = sum(1 for tc in text_chunks if tc.content_type == "table")
+    emit_progress(55, f"Prepared {len(chunk_bodies)} chunks ({table_n} table segments)...")
 
     emit_progress(65, "Generating embeddings...")
-    embeddings = model.encode(chunks, convert_to_numpy=True, normalize_embeddings=True)
+    embeddings = model.encode(chunk_bodies, convert_to_numpy=True, normalize_embeddings=True)
     embeddings = np.asarray(embeddings, dtype=np.float32).tolist()
 
     emit_progress(80, "Saving PDF file...")
@@ -144,10 +144,21 @@ def ingest_pdf(
     collection_name = f"pdf_{digest[:16]}"
     collection = get_or_create_vector_collection(client, collection_name)
 
-    ids = [f"{digest}_{idx}" for idx in range(len(chunks))]
-    metadatas = [{"chunk_index": idx, "filename": pdf_name, "sha256": digest} for idx in range(len(chunks))]
+    ids = [f"{digest}_{idx}" for idx in range(len(text_chunks))]
+    metadatas = []
+    for idx, tc in enumerate(text_chunks):
+        meta = {
+            "chunk_index": idx,
+            "filename": pdf_name,
+            "sha256": digest,
+            "content_type": tc.content_type,
+            "page": int(tc.page),
+        }
+        if tc.section:
+            meta["section"] = tc.section[:200]
+        metadatas.append(meta)
     emit_progress(90, "Writing vectors to database...")
-    collection.add(ids=ids, embeddings=embeddings, documents=chunks, metadatas=metadatas)
+    collection.add(ids=ids, embeddings=embeddings, documents=chunk_bodies, metadatas=metadatas)
 
     records.append(
         {
@@ -156,7 +167,7 @@ def ingest_pdf(
             "path": str(file_path),
             "sha256": digest,
             "collection_name": collection_name,
-            "chunks": len(chunks),
+            "chunks": len(text_chunks),
             "uploaded_at": datetime.utcnow().isoformat() + "Z",
         }
     )
@@ -166,14 +177,14 @@ def ingest_pdf(
     print(
         "\n=== PDF uploaded & indexed (Streamlit) ===",
         f"File: {pdf_name}",
-        f"Chunked into {len(chunks)} chunks; embeddings stored in vector store",
+        f"Chunked into {len(text_chunks)} chunks; embeddings stored in vector store",
         f"Vector collection name: {collection_name}  (VECTOR_BACKEND={vector_backend})",
         "(MySQL not used in Streamlit mode; registry saved to vector store / files.json)",
         "==========================================\n",
         sep="\n",
         flush=True,
     )
-    return True, f"Indexed {pdf_name} with {len(chunks)} chunks."
+    return True, f"Indexed {pdf_name} with {len(text_chunks)} chunks."
 
 
 def get_available_models() -> List[str]:
@@ -356,6 +367,7 @@ if user_question:
                         temperature=temperature,
                         num_predict=max_output_tokens,
                         allow_inference=reasoning_mode,
+                        document_sha256=current_record.get("sha256"),
                     )
                 is_friendly = is_small_talk(user_question.strip())
                 if not is_friendly:

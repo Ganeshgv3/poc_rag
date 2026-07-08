@@ -26,11 +26,13 @@ At a high level, the app:
 ### 1) Ingestion
 
 - PDF files are uploaded from UI and stored under `data/uploads`.
-- Text is extracted using PyMuPDF (`fitz`) via `text_chunking.extract_text`.
-- Text is normalized (line merge, whitespace cleanup, de-hyphenation) and chunked with overlap.
+- Text and **tables** are extracted with PyMuPDF (`text_chunking.extract_and_chunk`): `find_tables()` → markdown, prose blocks in reading order (table regions deduplicated from plain text).
+- **Table chunks** are split by row count with header rows repeated; each chunk is prefixed with `[Page N | Table]` (and section when detected). **Prose** uses paragraph/sentence boundaries with overlap.
+- Chunk metadata stored at index time: `content_type` (`prose` / `table`), `page`, optional `section` (plus `chunk_index`, `filename`, `sha256`).
 - Chunking is tunable with environment variables:
   - `PDF_CHUNK_SIZE` (default around 1100)
   - `PDF_CHUNK_OVERLAP` (default around 180)
+  - `PDF_TABLE_EXTRACTION_ENABLED`, `PDF_TABLE_MAX_ROWS_PER_CHUNK` (default 18 data rows per table chunk)
 
 ### 2) Embedding and vector store
 
@@ -43,9 +45,11 @@ At a high level, the app:
 
 ### 3) Retrieval and answer generation
 
-- **Hybrid retrieval** (default): dense vector similarity plus **BM25** lexical scoring, merged with **reciprocal rank fusion (RRF)**. Implemented in `hybrid_retrieval.py` (`retrieve_with_hybrid`); invoked from the LangGraph **retrieve** node in `rag_pipeline.py` (also used by the legacy Streamlit path through the same pipeline). Requires the `rank-bm25` package; if hybrid is disabled or the dependency is missing, the app falls back to dense-only search.
+- **Hybrid retrieval** (default): dense vector similarity plus **BM25** lexical scoring, merged with a configurable **ranking method**. Implemented in `hybrid_retrieval.py` (`retrieve_with_hybrid`) with fusion logic in `retrieval_ranking.py`; invoked from the LangGraph **retrieve** node in `rag_pipeline.py` (also used by the legacy Streamlit path through the same pipeline). Requires the `rank-bm25` package; if hybrid is disabled or the dependency is missing, the app falls back to dense-only search.
+- **Ranking methods** (`RETRIEVAL_RANKING_METHOD`): `rrf` (reciprocal rank fusion, default), `dense`, `sparse`, `weighted` (normalized dense similarity + BM25 scores with `RETRIEVAL_RANKING_DENSE_WEIGHT` / `RETRIEVAL_RANKING_SPARSE_WEIGHT`).
+- **Metadata filtering** (`retrieval_filter.py`): restricts candidates by chunk metadata (`filename`, `sha256`, `chunk_index`, Chroma operators). Per chat, the API and Streamlit pass the document **sha256** automatically; optional env `RETRIEVAL_META_FILTER` (JSON) and API body field `metadata_filter` add further constraints. Filters apply to dense `query`/`get` and to the BM25 corpus (Chroma and Qdrant adapters).
 - Dense search uses the same embedding model and vector backend as before, with a larger candidate pool before fusion; final context size remains the same `top_k` passed into retrieval (e.g. 3 for API chat; Streamlit exposes a slider).
-- Tunable via env: `HYBRID_SEARCH_ENABLED`, `HYBRID_RRF_K`, `HYBRID_DENSE_POOL`, `HYBRID_SPARSE_POOL`, `HYBRID_MAX_TOTAL_CHUNKS` (see `.env.example`).
+- Tunable via env: `HYBRID_SEARCH_ENABLED`, `HYBRID_RRF_K`, `HYBRID_DENSE_POOL`, `HYBRID_SPARSE_POOL`, `HYBRID_MAX_TOTAL_CHUNKS`, `RETRIEVAL_RANKING_METHOD`, `RETRIEVAL_META_FILTER`, `RETRIEVAL_META_FILTER_ENABLED` (see `.env.example`).
 - **Question normalization (`prompts.expand_question_shorthand`)** runs in the graph’s **expand** step before retrieval. It handles `&` → “and”, spaced `/` → “or”, and maps common **procedural openers** (case-insensitive) to a canonical **“how to ”** prefix—for example “guide me to …”, “show me how to …”, “walk me through …”, “help me to …”, “steps to …”, “how do i …”—so retrieval and generation stay aligned across paraphrases.
 - **`retrieval_query_variants`** (`prompts.py`) supplies up to a few distinct query strings per turn (full normalized question plus optional prefix-stripped tails such as after “how to ”) so hybrid search can recall table-like or imperative chunks; the retrieve node uses the first few variants (capped) and merges with deduplication.
 - Prompt assembly and message shaping live in `prompts.py` (`SYSTEM_PROMPT`, memory-aware user blob via `build_chat_messages_for_ollama`). System and task text stress **intent-stable** answers across procedural wording and discourage empty or generic “rephrase” replies when context supports the topic.
@@ -117,5 +121,6 @@ At a high level, the app:
 - Chunking: `PDF_CHUNK_SIZE`, `PDF_CHUNK_OVERLAP`
 - Vector backend: `VECTOR_BACKEND`, `CHROMA_URL`, `QDRANT_URL`, `QDRANT_API_KEY`
 - Hybrid retrieval: `HYBRID_SEARCH_ENABLED`, `HYBRID_RRF_K`, `HYBRID_DENSE_POOL`, `HYBRID_SPARSE_POOL`, `HYBRID_MAX_TOTAL_CHUNKS`
+- Ranking / meta filter: `RETRIEVAL_RANKING_METHOD`, `RETRIEVAL_RANKING_DENSE_WEIGHT`, `RETRIEVAL_RANKING_SPARSE_WEIGHT`, `RETRIEVAL_META_FILTER_ENABLED`, `RETRIEVAL_META_FILTER`
 - Agentic RAG: `AGENTIC_RAG_ENABLED`, `AGENTIC_RAG_MERGED_CAP`, `AGENTIC_RAG_MAX_FOLLOWUP_QUERIES`, `AGENTIC_RAG_GRADER_NUM_PREDICT`
 - Optional LangSmith (LangChain/LangGraph): `LANGCHAIN_TRACING_V2`, `LANGCHAIN_API_KEY`

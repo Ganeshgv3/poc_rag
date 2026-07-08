@@ -249,7 +249,13 @@ def build_prompt(question: str, contexts: List[str], allow_inference: bool) -> s
     - Even when inference is allowed, grounded extraction is preferred.
     """
 
-    trimmed_contexts = [ctx[:1400] for ctx in (contexts or [])]
+    def _ctx_limit(ctx: str) -> int:
+        # Table chunks use markdown rows; allow more tokens than prose-only excerpts.
+        if "|" in ctx and ctx.count("|") >= 6:
+            return 2200
+        return 1400
+
+    trimmed_contexts = [ctx[: _ctx_limit(ctx)] for ctx in (contexts or [])]
     context_block = "\n\n---\n\n".join(trimmed_contexts)
 
     if allow_inference:

@@ -13,7 +13,7 @@ import uuid
 from functools import lru_cache
 from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, TypedDict
 
-from langchain_community.chat_models import ChatOllama
+from ollama_chat import ChatOllama
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableLambda, RunnableSerializable
@@ -21,6 +21,7 @@ from langgraph.graph import END, START, StateGraph
 
 from chroma_helpers import get_or_create_vector_collection
 from hybrid_retrieval import retrieve_with_hybrid
+from retrieval_filter import MetaFilter, resolve_metadata_filter
 from prompts import (
     build_chat_messages_for_ollama,
     expand_question_shorthand,
@@ -41,6 +42,7 @@ from rag_routing import (
 class RagGraphState(TypedDict, total=False):
     question: str
     question_for_rag: str
+    document_sha256: str
     collection_name: str
     top_k: int
     contexts: List[str]
@@ -52,6 +54,7 @@ class RagGraphState(TypedDict, total=False):
     num_predict: int
     allow_inference: bool
     agentic_enabled: bool
+    metadata_filter: MetaFilter
     retrieval_phase_seconds: float
     answer: str
 
@@ -196,9 +199,19 @@ def _make_retrieve_node(embedding_model: Any, chroma_client: Any):
         top_k = int(state.get("top_k") or 3)
         collection = get_or_create_vector_collection(chroma_client, name)
         q = state.get("question_for_rag") or ""
+        meta_filter = resolve_metadata_filter(
+            explicit=state.get("metadata_filter"),
+            document_sha256=state.get("document_sha256"),
+        )
         batches: List[Tuple[List[str], List[float]]] = []
         for variant in retrieval_query_variants(q)[:8]:
-            docs, dists = retrieve_with_hybrid(variant, collection, embedding_model, top_k)
+            docs, dists = retrieve_with_hybrid(
+                variant,
+                collection,
+                embedding_model,
+                top_k,
+                metadata_filter=meta_filter,
+            )
             if docs:
                 batches.append((list(docs or []), list(dists or [])))
         if not batches:
@@ -221,6 +234,10 @@ def _make_agentic_refine_node(embedding_model: Any, chroma_client: Any):
             return {}
         t0 = time.perf_counter()
         prev = float(state.get("retrieval_phase_seconds") or 0.0)
+        meta_filter = resolve_metadata_filter(
+            explicit=state.get("metadata_filter"),
+            document_sha256=state.get("document_sha256"),
+        )
         new_ctx, new_dists = refine_contexts_agentic(
             question=str(state.get("question") or ""),
             question_for_rag=str(state.get("question_for_rag") or ""),
@@ -232,6 +249,7 @@ def _make_agentic_refine_node(embedding_model: Any, chroma_client: Any):
             chroma_client=chroma_client,
             ollama_base_url=str(state.get("ollama_base_url") or "http://localhost:11434"),
             ollama_model=str(state.get("ollama_model") or "llama3.1:8b"),
+            metadata_filter=meta_filter,
         )
         extra = prev + (time.perf_counter() - t0)
         if new_ctx == ctx:
@@ -356,12 +374,20 @@ def run_pdf_rag_sync(
     num_predict: int = 320,
     allow_inference: bool = True,
     agentic_enabled: Optional[bool] = None,
+    document_sha256: Optional[str] = None,
+    metadata_filter: Optional[MetaFilter] = None,
 ) -> Tuple[str, List[str], List[float], float]:
     """Run full LangGraph + LangChain path. Returns (answer, contexts, distances, retrieval_seconds)."""
     full, _ = get_compiled_rag_graphs(embedding_model, chroma_client)
+    resolved_filter = resolve_metadata_filter(
+        explicit=metadata_filter,
+        document_sha256=document_sha256,
+    )
     initial: RagGraphState = {
         "question": question.strip(),
         "collection_name": collection_name,
+        "document_sha256": (document_sha256 or "").strip(),
+        "metadata_filter": resolved_filter or {},
         "top_k": top_k,
         "prior_messages": prior_messages,
         "ollama_base_url": ollama_base_url,
@@ -396,6 +422,8 @@ def stream_pdf_rag_llm_tokens(
     num_predict: int = 320,
     allow_inference: bool = True,
     agentic_enabled: Optional[bool] = None,
+    document_sha256: Optional[str] = None,
+    metadata_filter: Optional[MetaFilter] = None,
 ) -> Tuple[List[str], List[float], float, Optional[str], Iterator[str], str]:
     """
     Run graph until the LLM node when streaming is required.
@@ -404,9 +432,15 @@ def stream_pdf_rag_llm_tokens(
     When prefilled_answer_or_none is set, the iterator is empty and the caller should use it as the full answer.
     """
     _, partial = get_compiled_rag_graphs(embedding_model, chroma_client)
+    resolved_filter = resolve_metadata_filter(
+        explicit=metadata_filter,
+        document_sha256=document_sha256,
+    )
     initial: RagGraphState = {
         "question": question.strip(),
         "collection_name": collection_name,
+        "document_sha256": (document_sha256 or "").strip(),
+        "metadata_filter": resolved_filter or {},
         "top_k": top_k,
         "prior_messages": prior_messages,
         "ollama_base_url": ollama_base_url,

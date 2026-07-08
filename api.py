@@ -26,7 +26,8 @@ from prompts import expand_question_shorthand
 from rag_metrics import accuracy_from_signals
 from rag_pipeline import retry_rag_llm_if_weak, run_pdf_rag_sync, stream_pdf_rag_llm_tokens
 from rag_routing import clean_answer_text
-from text_chunking import chunk_text, extract_text
+from retrieval_filter import MetaFilter
+from text_chunking import extract_and_chunk
 
 
 BASE_DIR = Path(__file__).parent
@@ -291,6 +292,16 @@ class ChatPayload(BaseModel):
     question: str
     chat_id: Optional[int] = None
     replace_user_message_id: Optional[int] = None
+    metadata_filter: Optional[Dict[str, Any]] = None
+
+
+def _chat_metadata_filter(payload: ChatPayload) -> Optional[MetaFilter]:
+    raw = payload.metadata_filter
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="metadata_filter must be a JSON object.")
+    return dict(raw)
 
 
 class AssistantMessagePayload(BaseModel):
@@ -562,12 +573,12 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(auth_
             if existing:
                 raise HTTPException(status_code=409, detail="This PDF is already indexed.")
 
-            text = extract_text(pdf_bytes)
-            chunks = chunk_text(text)
-            if not chunks:
+            text_chunks = extract_and_chunk(pdf_bytes)
+            if not text_chunks:
                 raise HTTPException(status_code=400, detail="Could not extract text from PDF.")
+            chunk_bodies = [tc.text for tc in text_chunks]
             model = get_embedding_model()
-            embeddings = model.encode(chunks, convert_to_numpy=True, normalize_embeddings=True)
+            embeddings = model.encode(chunk_bodies, convert_to_numpy=True, normalize_embeddings=True)
             embeddings = np.asarray(embeddings, dtype=np.float32).tolist()
 
             original_name = Path(file.filename).name
@@ -578,12 +589,25 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(auth_
             collection_name = f"pdf_{digest[:16]}"
             try:
                 collection = get_or_create_vector_collection(get_chroma_client(), collection_name)
-                ids = [f"{digest}_{idx}" for idx in range(len(chunks))]
-                metadatas = [
-                    {"chunk_index": idx, "filename": original_name, "sha256": digest}
-                    for idx in range(len(chunks))
-                ]
-                collection.add(ids=ids, embeddings=embeddings, documents=chunks, metadatas=metadatas)
+                ids = [f"{digest}_{idx}" for idx in range(len(text_chunks))]
+                metadatas = []
+                for idx, tc in enumerate(text_chunks):
+                    meta = {
+                        "chunk_index": idx,
+                        "filename": original_name,
+                        "sha256": digest,
+                        "content_type": tc.content_type,
+                        "page": int(tc.page),
+                    }
+                    if tc.section:
+                        meta["section"] = tc.section[:200]
+                    metadatas.append(meta)
+                collection.add(
+                    ids=ids,
+                    embeddings=embeddings,
+                    documents=chunk_bodies,
+                    metadatas=metadatas,
+                )
             except Exception as exc:
                 detail = _vector_store_unreachable_detail(exc)
                 if detail:
@@ -595,7 +619,7 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(auth_
                 INSERT INTO documents (user_id, filename, stored_name, path, sha256, collection_name, chunks)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                (user_id, original_name, stored_name, str(file_path), digest, collection_name, len(chunks)),
+                (user_id, original_name, stored_name, str(file_path), digest, collection_name, len(text_chunks)),
             )
             document_id = cur.lastrowid
             mysql_db = os.getenv("MYSQL_DATABASE", "rag_app")
@@ -603,7 +627,7 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(auth_
             print(
                 "\n=== PDF uploaded & indexed ===",
                 f"File: {original_name}",
-                f"Chunked into {len(chunks)} chunks; embeddings stored in vector store",
+                f"Chunked into {len(text_chunks)} chunks; embeddings stored in vector store",
                 f"MySQL database: {mysql_db}  (documents.id={document_id})",
                 f"Vector collection name: {collection_name}  (VECTOR_BACKEND={vector_backend})",
                 "================================\n",
@@ -664,7 +688,7 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, collection_name FROM documents WHERE id=%s AND user_id=%s",
+                "SELECT id, collection_name, sha256 FROM documents WHERE id=%s AND user_id=%s",
                 (document_id, user_id),
             )
             doc = cur.fetchone()
@@ -705,6 +729,8 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
                     temperature=rag_chat_llm_temperature(),
                     num_predict=rag_chat_llm_num_predict(),
                     allow_inference=True,
+                    document_sha256=doc.get("sha256"),
+                    metadata_filter=_chat_metadata_filter(payload),
                 )
             except Exception as exc:
                 detail = _vector_store_unreachable_detail(exc)
@@ -780,7 +806,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
     replace_id: Optional[int] = payload.replace_user_message_id
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id, collection_name FROM documents WHERE id=%s AND user_id=%s",
+            "SELECT id, collection_name, sha256 FROM documents WHERE id=%s AND user_id=%s",
             (document_id, user_id),
         )
         doc = cur.fetchone()
@@ -861,6 +887,8 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
             temperature=rag_chat_llm_temperature(),
             num_predict=rag_chat_llm_num_predict(),
             allow_inference=True,
+            document_sha256=doc.get("sha256"),
+            metadata_filter=_chat_metadata_filter(payload),
         )
     except Exception as exc:
         conn.close()

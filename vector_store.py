@@ -227,14 +227,19 @@ class QdrantCollectionAdapter:
         query_embeddings: List[List[float]],
         n_results: int,
         include: Optional[List[str]] = None,
+        where: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         include = include or ["documents", "distances"]
         qv = query_embeddings[0]
+        from retrieval_filter import build_qdrant_filter
+
+        q_filter = build_qdrant_filter(where) if where else None
         resp = self._client.query_points(
             collection_name=self._name,
             query=qv,
             limit=n_results,
             with_payload=True,
+            query_filter=q_filter,
         )
         hits = resp.points
         docs: List[str] = []
@@ -261,10 +266,17 @@ class QdrantCollectionAdapter:
             out["metadatas"] = [metas]
         return out
 
-    def get(self, include: Optional[List[str]] = None) -> Dict[str, Any]:
+    def get(
+        self,
+        include: Optional[List[str]] = None,
+        where: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Chroma-compatible scroll: ids, metadatas, and optionally document text from payload."""
         include = include or ["metadatas"]
         want_docs = "documents" in include
+        from retrieval_filter import build_qdrant_filter, filter_indexed_rows
+
+        q_filter = build_qdrant_filter(where) if where else None
         offset = None
         ids: List[str] = []
         documents: List[str] = []
@@ -276,6 +288,7 @@ class QdrantCollectionAdapter:
                 offset=offset,
                 with_payload=True,
                 with_vectors=False,
+                scroll_filter=q_filter,
             )
             for p in points:
                 ids.append(str(p.id))
@@ -286,6 +299,8 @@ class QdrantCollectionAdapter:
                 metadatas.append(payload)
             if offset is None:
                 break
+        if where and not q_filter:
+            ids, documents, metadatas = filter_indexed_rows(ids, documents, metadatas, where)
         out: Dict[str, Any] = {"ids": ids, "metadatas": metadatas}
         if want_docs:
             out["documents"] = documents

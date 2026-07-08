@@ -10,12 +10,13 @@ import json
 import os
 from typing import Any, List, Optional, Tuple
 
-from langchain_community.chat_models import ChatOllama
+from ollama_chat import ChatOllama
 from langchain_core.messages import HumanMessage
 
 from chroma_helpers import get_or_create_vector_collection
 from hybrid_retrieval import retrieve_with_hybrid
 from prompts import retrieval_query_variants
+from retrieval_filter import MetaFilter
 
 
 def agentic_rag_enabled_from_env() -> bool:
@@ -182,6 +183,7 @@ def run_followup_retrievals(
     embedding_model: Any,
     chroma_client: Any,
     top_k: int,
+    metadata_filter: Optional[MetaFilter] = None,
 ) -> List[Tuple[List[str], List[float]]]:
     if not queries or not collection_name:
         return []
@@ -193,7 +195,13 @@ def run_followup_retrievals(
         if not q:
             continue
         for variant in retrieval_query_variants(q)[:3]:
-            docs, dists = retrieve_with_hybrid(variant, collection, embedding_model, per_q_k)
+            docs, dists = retrieve_with_hybrid(
+                variant,
+                collection,
+                embedding_model,
+                per_q_k,
+                metadata_filter=metadata_filter,
+            )
             if docs:
                 batches.append((list(docs or []), list(dists or [])))
     return batches
@@ -211,6 +219,7 @@ def refine_contexts_agentic(
     chroma_client: Any,
     ollama_base_url: str,
     ollama_model: str,
+    metadata_filter: Optional[MetaFilter] = None,
 ) -> Tuple[List[str], List[float]]:
     """
     Single refinement round: grade → optional follow-up hybrid retrieval → merge (capped).
@@ -246,6 +255,7 @@ def refine_contexts_agentic(
         embedding_model=embedding_model,
         chroma_client=chroma_client,
         top_k=top_k,
+        metadata_filter=metadata_filter,
     )
     merged_docs, merged_dists = _merge_retrieval_batches(seed_batch + extra, cap)
     if len(merged_docs) <= len(contexts):
