@@ -1,8 +1,11 @@
 import hashlib
 import json
+import logging
 import os
 import re
+import secrets
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -32,6 +35,12 @@ from retrieval_filter import MetaFilter
 from text_chunking import extract_and_chunk
 
 
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("rag_api")
+
 BASE_DIR = Path(__file__).parent
 load_dotenv_for_project(BASE_DIR)
 
@@ -42,8 +51,43 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me-secret")
 JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", "120"))
+DEFAULT_JWT_SECRET = "change-me-secret"
+APP_ENV = (os.getenv("APP_ENV") or "development").strip().lower()
+MAX_UPLOAD_MB = max(1, int(os.getenv("MAX_UPLOAD_MB", "25") or "25"))
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+
+def _resolve_jwt_secret() -> str:
+    """Return the signing secret, refusing the placeholder default in production.
+
+    In non-production environments we fall back to an ephemeral random secret so
+    the app still boots locally, but tokens will not survive a restart (which is
+    the desired signal that a real JWT_SECRET must be configured).
+    """
+    secret = (os.getenv("JWT_SECRET") or "").strip()
+    if secret and secret not in (DEFAULT_JWT_SECRET, "change-me-to-a-long-random-string"):
+        return secret
+    if APP_ENV in ("prod", "production"):
+        raise RuntimeError(
+            "JWT_SECRET is missing or set to the insecure default. "
+            "Set a long random JWT_SECRET before running in production."
+        )
+    logger.warning(
+        "JWT_SECRET is not set to a secure value; using an ephemeral secret. "
+        "Tokens will be invalidated on restart. Set JWT_SECRET in your .env."
+    )
+    return secrets.token_urlsafe(48)
+
+
+JWT_SECRET = _resolve_jwt_secret()
+
+
+def _cors_allow_origins() -> List[str]:
+    raw = (os.getenv("CORS_ALLOW_ORIGINS") or "").strip()
+    if not raw or raw == "*":
+        return ["*"]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
 def rag_chat_llm_temperature() -> float:
@@ -102,14 +146,30 @@ def fetch_prior_messages(cur, chat_id: int, *, exclude_last_user: bool) -> List[
     return out
 
 
-app = FastAPI(title="RAG Chat API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="RAG Chat API", lifespan=lifespan)
+
+_cors_origins = _cors_allow_origins()
+# Browsers reject `Access-Control-Allow-Origin: *` together with credentials, so
+# only enable credentialed CORS when an explicit origin allowlist is configured.
+_cors_wildcard = _cors_origins == ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=not _cors_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if _cors_wildcard:
+    logger.warning(
+        "CORS is open to all origins (CORS_ALLOW_ORIGINS unset). "
+        "Set CORS_ALLOW_ORIGINS to a comma-separated allowlist for production."
+    )
 security = HTTPBearer(auto_error=False)
 
 
@@ -273,11 +333,15 @@ def init_db():
 _embedding_model = None
 _chroma_client = None
 
+EMBEDDING_MODEL_NAME = (
+    os.getenv("EMBEDDING_MODEL") or "sentence-transformers/all-MiniLM-L6-v2"
+).strip()
+
 
 def get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
-        _embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
     return _embedding_model
 
 
@@ -303,20 +367,19 @@ def create_token(user: Dict) -> str:
 
 
 def decode_user_id(token: str):
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return int(payload["sub"])
-    except Exception:
-        return None
+    payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    return int(payload["sub"])
 
 
 def auth_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Unauthorized")
-    user_id = decode_user_id(credentials.credentials)
-    if not user_id:
+    try:
+        return decode_user_id(credentials.credentials)
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
+    except (jwt.InvalidTokenError, KeyError, ValueError, TypeError):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return user_id
 
 
 class RegisterPayload(BaseModel):
@@ -641,9 +704,18 @@ def get_document_pdf(document_id: int, user_id: int = Depends(auth_user)):
 
 @app.post("/api/files/upload")
 async def upload_file(file: UploadFile = File(...), user_id: int = Depends(auth_user)):
-    if file is None or not file.filename.lower().endswith(".pdf"):
+    if file is None or not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Upload a PDF file.")
     pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(pdf_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"PDF exceeds the maximum upload size of {MAX_UPLOAD_MB} MB.",
+        )
+    if not pdf_bytes.lstrip()[:5].startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="File does not look like a valid PDF.")
     digest = sha256_bytes(pdf_bytes)
 
     conn = db_conn()
@@ -741,9 +813,9 @@ def delete_file(document_id: int, user_id: int = Depends(auth_user)):
             if collection_name:
                 try:
                     delete_named_collection(get_chroma_client(), collection_name)
-                except Exception:
+                except Exception as exc:
                     # Keep API resilient if vector collection is already missing/corrupt.
-                    pass
+                    logger.warning("Failed to delete vector collection %s: %s", collection_name, exc)
 
             path_value = doc.get("path")
             if path_value:
@@ -1377,11 +1449,6 @@ def run_chat_eval(payload: ChatEvalPayload, user_id: int = Depends(auth_user)):
         return {"chat_id": payload.chat_id, "report": report}
     finally:
         conn.close()
-
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
 
 
 if __name__ == "__main__":

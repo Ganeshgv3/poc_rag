@@ -49,6 +49,13 @@ def agentic_grader_num_predict() -> int:
         return 220
 
 
+def _agentic_ollama_timeout_seconds() -> float:
+    try:
+        return max(5.0, float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120")))
+    except (TypeError, ValueError):
+        return 120.0
+
+
 def agentic_max_followup_queries() -> int:
     try:
         return max(0, min(3, int(os.getenv("AGENTIC_RAG_MAX_FOLLOWUP_QUERIES", "2"))))
@@ -169,6 +176,7 @@ def grade_retrieval_sufficiency(
         model=ollama_model,
         temperature=0.0,
         num_predict=agentic_grader_num_predict(),
+        client_kwargs={"timeout": _agentic_ollama_timeout_seconds()},
     )
     msg = HumanMessage(content=f"{_GRADER_SYSTEM}\n\n---\n\n{user_block}")
     out = llm.invoke([msg])

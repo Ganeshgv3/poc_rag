@@ -1,9 +1,26 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import api from "../api";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+
+/** Open links safely in a new tab; react-markdown never emits raw HTML by default. */
+const MARKDOWN_COMPONENTS = {
+  a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+};
+
+function AssistantMarkdown({ content }) {
+  return (
+    <div className="bubble bubble--markdown markdown-body">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+        {String(content || "")}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 function isStreamPlaceholderMessage(message) {
   return String(message?.id ?? "").startsWith("stream-");
@@ -368,6 +385,8 @@ export default function ChatPage() {
   const [exportFormat, setExportFormat] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [showScrollToLatest, setShowScrollToLatest] = useState(false);
+  const isNearBottomRef = useRef(true);
   const [editingUserMessageId, setEditingUserMessageId] = useState(null);
   const [editingDraft, setEditingDraft] = useState("");
   const [editingSidebarChatId, setEditingSidebarChatId] = useState(null);
@@ -684,14 +703,46 @@ export default function ChatPage() {
     loadChats(docId);
   }, [selectedDocument?.id]);
 
-  useEffect(() => {
+  const handleMessagesScroll = () => {
+    const node = messagesContainerRef.current;
+    if (!node) return;
+    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+    const near = distanceFromBottom < 120;
+    isNearBottomRef.current = near;
+    setShowScrollToLatest((prev) => (prev === !near ? prev : !near));
+  };
+
+  const jumpToLatest = () => {
+    isNearBottomRef.current = true;
+    setShowScrollToLatest(false);
     animateScrollToBottom(true);
-  }, [messages, selectedChatId]);
+  };
 
   useEffect(() => {
+    // Only follow new content when the user is already reading the latest turn,
+    // so scrolling up to re-read isn't yanked back down mid-stream.
+    if (isNearBottomRef.current) animateScrollToBottom(true);
+  }, [messages]);
+
+  useEffect(() => {
+    // Switching chats should always land on the newest message.
+    isNearBottomRef.current = true;
+    setShowScrollToLatest(false);
+    animateScrollToBottom(false);
+  }, [selectedChatId]);
+
+  useEffect(() => {
+    if (!isNearBottomRef.current) return;
     // Keep newest user question / streamed answer visible.
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, sending]);
+
+  useEffect(() => {
+    const el = questionInputRef.current;
+    if (!el || el.tagName !== "TEXTAREA") return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [question]);
 
   useEffect(() => {
     animateSidebarToActive();
@@ -987,6 +1038,8 @@ export default function ChatPage() {
     if (!selectedDocument || !question.trim() || sending) return;
     const userMessage = { role: "user", content: question.trim() };
     const streamMessageId = `stream-${Date.now()}`;
+    isNearBottomRef.current = true;
+    setShowScrollToLatest(false);
     setMessages((prev) => [...prev, userMessage, { id: streamMessageId, role: "assistant", content: "" }]);
     const messageText = question.trim();
     setQuestion("");
@@ -1127,6 +1180,8 @@ export default function ChatPage() {
     if (idx === -1) return;
     cancelEditUserMessage();
     const streamMessageId = `stream-${Date.now()}`;
+    isNearBottomRef.current = true;
+    setShowScrollToLatest(false);
     setMessages((prev) => {
       const updated = prev.map((m, i) => (i === idx ? { ...m, content: next } : m));
       const head = updated.slice(0, idx + 1);
@@ -1632,7 +1687,7 @@ export default function ChatPage() {
             </select>
           </div>
         </header>
-        <section className="messages" ref={messagesContainerRef}>
+        <section className="messages" ref={messagesContainerRef} onScroll={handleMessagesScroll}>
           {!messages.length ? (
             <div className="welcome-box">Ask anything about your selected PDF.</div>
           ) : (
@@ -1749,6 +1804,8 @@ export default function ChatPage() {
                       <span className="typing-dot" />
                       <span className="typing-dot" />
                     </div>
+                  ) : message.role === "assistant" ? (
+                    <AssistantMarkdown content={message.content} />
                   ) : (
                     <div className="bubble">{message.content}</div>
                   )}
@@ -1806,13 +1863,33 @@ export default function ChatPage() {
           ) : null}
           <div ref={messagesEndRef} />
         </section>
+        {showScrollToLatest ? (
+          <button
+            type="button"
+            className="scroll-to-latest"
+            onClick={jumpToLatest}
+            aria-label="Scroll to latest message"
+          >
+            <span className="scroll-to-latest-arrow" aria-hidden="true">↓</span>
+            Latest
+          </button>
+        ) : null}
         <form className="composer" onSubmit={sendQuestion}>
-          <input
+          <textarea
             ref={questionInputRef}
+            className="composer-input"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Ask a question..."
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendQuestion(e);
+              }
+            }}
+            placeholder="Ask a question…  (Enter to send · Shift+Enter for a new line)"
+            rows={1}
             disabled={!selectedDocument || sending}
+            aria-label="Ask a question about your PDF"
           />
           {sending ? (
             <button type="button" className="stop-btn" onClick={stopProcess} aria-label="Stop process" title="Stop">
@@ -1830,7 +1907,19 @@ export default function ChatPage() {
             </button>
           )}
         </form>
-        {error && <div className="error-text chat-error">{error}</div>}
+        {error && (
+          <div className="error-text chat-error" role="alert">
+            <span className="chat-error-text">{error}</span>
+            <button
+              type="button"
+              className="chat-error-dismiss"
+              onClick={() => setError("")}
+              aria-label="Dismiss error"
+            >
+              <IconClose className="chat-error-dismiss-icon" />
+            </button>
+          </div>
+        )}
       </main>
       {showPdfViewer && pdfObjectUrl && selectedDocument ? (
         <div

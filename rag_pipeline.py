@@ -263,6 +263,13 @@ def _merge_hybrid_retrieval_batches(
     return docs_out, dists_out
 
 
+def _ollama_timeout_seconds() -> float:
+    try:
+        return max(5.0, float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120")))
+    except (TypeError, ValueError):
+        return 120.0
+
+
 @lru_cache(maxsize=32)
 def _chat_ollama(base_url: str, model: str, temperature: float, num_predict: int) -> ChatOllama:
     return ChatOllama(
@@ -270,6 +277,7 @@ def _chat_ollama(base_url: str, model: str, temperature: float, num_predict: int
         model=model,
         temperature=temperature,
         num_predict=num_predict,
+        client_kwargs={"timeout": _ollama_timeout_seconds()},
     )
 
 
