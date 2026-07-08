@@ -26,6 +26,110 @@ def _tokenize(text: str) -> List[str]:
     return [t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) > 1]
 
 
+def _compact_alnum(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+
+
+def _identifier_terms(query: str) -> List[str]:
+    """
+    Extract likely document identifiers (loan/account/reference codes) from a query.
+    """
+    terms: List[str] = []
+    seen: set[str] = set()
+    for tok in re.findall(r"\b[a-z0-9][a-z0-9._/\-]{4,}\b", (query or "").lower()):
+        compact = _compact_alnum(tok)
+        if len(compact) < 6:
+            continue
+        if not any(ch.isdigit() for ch in compact):
+            continue
+        variants = [compact]
+        stripped = compact.lstrip("0")
+        if stripped and stripped != compact and len(stripped) >= 5:
+            variants.append(stripped)
+        for v in variants:
+            if v in seen:
+                continue
+            seen.add(v)
+            terms.append(v)
+    return terms
+
+
+def _identifier_priority_ids(
+    query: str,
+    all_ids: List[str],
+    all_docs: List[str],
+    *,
+    max_hits: int,
+) -> List[str]:
+    terms = _identifier_terms(query)
+    if not terms:
+        return []
+    scored: List[Tuple[int, int, str]] = []
+    for idx, (cid, doc) in enumerate(zip(all_ids, all_docs)):
+        compact_doc = _compact_alnum(doc)
+        if not compact_doc:
+            continue
+        hit_score = 0
+        for term in terms:
+            if term in compact_doc:
+                # Prefer exact-id containment heavily (works around embedding misses on numeric ids).
+                hit_score += max(1, len(term))
+        if hit_score > 0:
+            scored.append((-hit_score, idx, cid))
+    scored.sort()
+    out: List[str] = []
+    for _, _, cid in scored:
+        out.append(cid)
+        if len(out) >= max_hits:
+            break
+    return out
+
+
+def _prepend_priority_ids(base_ids: List[str], priority_ids: List[str], cap: int) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for cid in priority_ids:
+        if cid in seen:
+            continue
+        seen.add(cid)
+        out.append(cid)
+        if len(out) >= cap:
+            return out
+    for cid in base_ids:
+        if cid in seen:
+            continue
+        seen.add(cid)
+        out.append(cid)
+        if len(out) >= cap:
+            break
+    return out
+
+
+def _identifier_direct_docs(
+    query: str,
+    all_ids: List[str],
+    all_docs: List[str],
+    top_k: int,
+) -> Tuple[List[str], List[float]]:
+    """
+    Deterministic fallback for id-like queries: return chunks that directly contain
+    the queried identifier (or leading-zero variant), before semantic ranking.
+    """
+    ids = _identifier_priority_ids(query, all_ids, all_docs, max_hits=max(1, top_k))
+    if not ids:
+        return [], []
+    id_to_doc = dict(zip(all_ids, all_docs))
+    docs: List[str] = []
+    dists: List[float] = []
+    for i, cid in enumerate(ids[:top_k]):
+        doc = id_to_doc.get(cid, "")
+        if not doc:
+            continue
+        docs.append(doc)
+        dists.append(min(0.08, 0.02 + (i * 0.01)))
+    return docs, dists
+
+
 def _normalize_id(raw: Any) -> str:
     return str(raw)
 
@@ -184,6 +288,10 @@ def retrieve_with_hybrid(
         if len(all_docs) > _MAX_CHUNKS:
             return _dense_only(collection, embedding_model, query, top_k, metadata_filter)
 
+        direct_docs, direct_dists = _identifier_direct_docs(query, all_ids, all_docs, top_k)
+        if direct_docs:
+            return direct_docs, direct_dists
+
         where = chroma_where_clause(metadata_filter)
         dense_n = min(_DENSE_POOL, len(all_docs))
         dense_result = _dense_query(collection, embedding_model, query, dense_n, where=where)
@@ -259,6 +367,14 @@ def retrieve_with_hybrid(
             id_to_sparse_score=id_to_sparse_score,
             top_k=top_k,
         )
+        priority_ids = _identifier_priority_ids(
+            query,
+            all_ids,
+            all_docs,
+            max_hits=max(top_k, min(10, top_k + 3)),
+        )
+        if priority_ids:
+            ranked_ids = _prepend_priority_ids(ranked_ids, priority_ids, top_k)
         out_docs = [id_to_doc[c] for c in ranked_ids if c in id_to_doc]
         out_dist = [id_to_dense_dist.get(c, 0.28) for c in ranked_ids]
         return out_docs, out_dist

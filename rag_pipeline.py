@@ -8,6 +8,7 @@ LangGraph-orchestrated PDF RAG with LangChain ChatOllama.
 from __future__ import annotations
 
 import os
+import re
 import time
 import uuid
 from functools import lru_cache
@@ -37,6 +38,7 @@ from rag_routing import (
     is_small_talk,
     small_talk_reply,
 )
+from retrieval_rerank import rerank_contexts
 
 
 class RagGraphState(TypedDict, total=False):
@@ -57,6 +59,168 @@ class RagGraphState(TypedDict, total=False):
     metadata_filter: MetaFilter
     retrieval_phase_seconds: float
     answer: str
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name) or ("true" if default else "false")).strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int, minimum: int = 1, maximum: int = 1000) -> int:
+    try:
+        return max(minimum, min(maximum, int(os.getenv(name, str(default)))))
+    except ValueError:
+        return default
+
+
+_HYDE_ENABLED = _env_bool("HYDE_ENABLED", default=False)
+_HYDE_NUM_PREDICT = _env_int("HYDE_NUM_PREDICT", 140, minimum=64, maximum=512)
+_PARENT_CHILD_ENABLED = _env_bool("PARENT_CHILD_ENABLED", default=False)
+_PARENT_CHILD_WINDOW = _env_int("PARENT_CHILD_WINDOW", 1, minimum=1, maximum=5)
+_PARENT_CHILD_CAP = _env_int("PARENT_CHILD_CAP", 18, minimum=3, maximum=60)
+_CONTEXT_COMPRESS_ENABLED = _env_bool("CONTEXT_COMPRESS_ENABLED", default=True)
+_CONTEXT_COMPRESS_MAX_CHARS = _env_int("CONTEXT_COMPRESS_MAX_CHARS", 1600, minimum=300, maximum=5000)
+
+
+def _norm_text(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip()).casefold()
+
+
+def _tokset(s: str) -> set[str]:
+    return {t for t in re.findall(r"[a-z0-9]+", (s or "").lower()) if len(t) > 2}
+
+
+def _compress_context_text(query: str, text: str, max_chars: int) -> str:
+    raw = (text or "").strip()
+    if len(raw) <= max_chars:
+        return raw
+    header: List[str] = []
+    body_lines: List[str] = []
+    for i, ln in enumerate(raw.splitlines()):
+        s = ln.strip()
+        if i < 3 and (s.startswith("[Page ") or s.startswith("Section:")):
+            header.append(s)
+            continue
+        body_lines.append(ln)
+    body = " ".join(body_lines)
+    q = _tokset(query)
+    sentences = [seg.strip() for seg in re.split(r"(?<=[\.\?\!])\s+|\n+", body) if seg.strip()]
+    if not sentences:
+        return raw[:max_chars]
+    scored: List[Tuple[float, int, str]] = []
+    for i, sent in enumerate(sentences):
+        st = _tokset(sent)
+        overlap = len(st & q) / max(1, len(q)) if q else 0.0
+        score = overlap + min(0.25, len(sent) / 1800.0)
+        scored.append((score, i, sent))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    chosen = sorted(scored[: max(2, min(7, len(scored)))], key=lambda t: t[1])
+    merged = " ".join(row[2] for row in chosen).strip()
+    prefix = "\n".join(header).strip()
+    out = f"{prefix}\n\n{merged}".strip() if prefix else merged
+    if len(out) > max_chars:
+        out = out[: max_chars - 3].rstrip() + "..."
+    return out
+
+
+def _maybe_hyde_variant(state: RagGraphState, query: str) -> Optional[str]:
+    if not _HYDE_ENABLED:
+        return None
+    base_url = str(state.get("ollama_base_url") or "http://localhost:11434")
+    model = str(state.get("ollama_model") or "llama3.1:8b")
+    try:
+        llm = _chat_ollama(base_url, model, 0.0, _HYDE_NUM_PREDICT)
+        msg = HumanMessage(
+            content=(
+                "Generate one concise hypothetical passage that would likely answer the user question. "
+                "Keep it factual style, <= 90 words, no markdown.\n\n"
+                f"Question: {query}"
+            )
+        )
+        out = llm.invoke([msg])
+        text = str(getattr(out, "content", "") or "").strip()
+        if len(text) < 20:
+            return None
+        return text[:600]
+    except Exception:
+        return None
+
+
+def _expand_parent_child(
+    docs: List[str],
+    dists: List[float],
+    *,
+    collection: Any,
+    meta_filter: Optional[MetaFilter],
+    top_k: int,
+) -> Tuple[List[str], List[float]]:
+    if not _PARENT_CHILD_ENABLED or not docs:
+        return docs, dists
+    try:
+        got = collection.get(include=["documents", "metadatas"], where=meta_filter or None)
+    except TypeError:
+        got = collection.get(include=["documents", "metadatas"])
+    all_docs = list(got.get("documents") or [])
+    all_meta = list(got.get("metadatas") or [])
+    if not all_docs:
+        return docs, dists
+
+    by_sha_chunk: Dict[Tuple[str, int], Tuple[str, Dict[str, Any]]] = {}
+    for i, doc in enumerate(all_docs):
+        meta = dict(all_meta[i] or {}) if i < len(all_meta) else {}
+        sha = str(meta.get("sha256") or "")
+        cidx = meta.get("chunk_index")
+        if not sha or cidx is None:
+            continue
+        try:
+            by_sha_chunk[(sha, int(cidx))] = (str(doc), meta)
+        except (TypeError, ValueError):
+            continue
+
+    index_by_norm: Dict[str, Dict[str, Any]] = {}
+    for i, doc in enumerate(all_docs):
+        key = _norm_text(str(doc))
+        if not key:
+            continue
+        meta = dict(all_meta[i] or {}) if i < len(all_meta) else {}
+        if key not in index_by_norm:
+            index_by_norm[key] = meta
+
+    out_docs = list(docs)
+    out_d = list(dists)
+    seen = {_norm_text(d) for d in out_docs}
+    cap = max(top_k, min(_PARENT_CHILD_CAP, max(top_k + 2, top_k * 3)))
+    for i, doc in enumerate(docs):
+        if len(out_docs) >= cap:
+            break
+        meta = index_by_norm.get(_norm_text(doc))
+        if not meta:
+            continue
+        sha = str(meta.get("sha256") or "")
+        cidx = meta.get("chunk_index")
+        if not sha or cidx is None:
+            continue
+        try:
+            base = int(cidx)
+        except (TypeError, ValueError):
+            continue
+        for off in range(-_PARENT_CHILD_WINDOW, _PARENT_CHILD_WINDOW + 1):
+            if off == 0:
+                continue
+            match = by_sha_chunk.get((sha, base + off))
+            if not match:
+                continue
+            child_doc = str(match[0] or "").strip()
+            key = _norm_text(child_doc)
+            if not child_doc or key in seen:
+                continue
+            seen.add(key)
+            out_docs.append(child_doc)
+            seed_d = float(dists[i]) if i < len(dists) else 0.45
+            out_d.append(min(1.2, seed_d + 0.05))
+            if len(out_docs) >= cap:
+                break
+    return out_docs, out_d
 
 
 def _dict_messages_to_lc(messages: List[Dict[str, str]]) -> List[BaseMessage]:
@@ -203,20 +367,46 @@ def _make_retrieve_node(embedding_model: Any, chroma_client: Any):
             explicit=state.get("metadata_filter"),
             document_sha256=state.get("document_sha256"),
         )
+        variants = retrieval_query_variants(q)[:8]
+        hyde_variant = _maybe_hyde_variant(state, q)
+        if hyde_variant:
+            variants.append(hyde_variant)
         batches: List[Tuple[List[str], List[float]]] = []
-        for variant in retrieval_query_variants(q)[:8]:
+        for variant in variants[:10]:
             docs, dists = retrieve_with_hybrid(
                 variant,
                 collection,
                 embedding_model,
-                top_k,
+                max(top_k, 8),
                 metadata_filter=meta_filter,
             )
             if docs:
                 batches.append((list(docs or []), list(dists or [])))
         if not batches:
             return with_timing({"contexts": [], "distances": []})
-        merged_docs, merged_dists = _merge_hybrid_retrieval_batches(batches, top_k)
+        merged_docs, merged_dists = _merge_hybrid_retrieval_batches(
+            batches, max(top_k, 12 if _PARENT_CHILD_ENABLED else top_k)
+        )
+        if merged_docs:
+            merged_docs, merged_dists = rerank_contexts(
+                q, merged_docs, merged_dists, top_k=max(top_k, len(merged_docs))
+            )
+        merged_docs, merged_dists = _expand_parent_child(
+            merged_docs,
+            merged_dists,
+            collection=collection,
+            meta_filter=meta_filter,
+            top_k=top_k,
+        )
+        if _CONTEXT_COMPRESS_ENABLED and merged_docs:
+            merged_docs = [
+                _compress_context_text(q, d, _CONTEXT_COMPRESS_MAX_CHARS)
+                for d in merged_docs
+            ]
+        # Final dedupe + cap for generation context.
+        merged_docs, merged_dists = _merge_hybrid_retrieval_batches(
+            [(merged_docs, merged_dists)], top_k
+        )
         return with_timing({"contexts": merged_docs, "distances": merged_dists})
 
     return retrieve_node

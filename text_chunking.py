@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Literal, Sequence, Tuple
 
 ContentKind = Literal["prose", "table"]
 
@@ -60,6 +60,10 @@ def default_chunk_overlap() -> int:
 
 def default_table_max_rows_per_chunk() -> int:
     return _env_int("PDF_TABLE_MAX_ROWS_PER_CHUNK", 18, minimum=4)
+
+
+def default_table_row_overlap() -> int:
+    return _env_int("PDF_TABLE_ROW_OVERLAP", 2, minimum=0)
 
 
 def table_extraction_enabled() -> bool:
@@ -386,6 +390,61 @@ def _split_markdown_table(md: str, max_data_rows: int) -> List[str]:
     return out
 
 
+def _split_markdown_table_with_overlap(md: str, max_data_rows: int, row_overlap: int) -> List[str]:
+    lines = [ln for ln in md.strip().splitlines() if ln.strip()]
+    if len(lines) <= 2:
+        return [md.strip()] if md.strip() else []
+    header = lines[:2]
+    body = lines[2:]
+    if not body:
+        return ["\n".join(header)]
+
+    max_rows = max(1, int(max_data_rows))
+    overlap = max(0, min(int(row_overlap), max_rows - 1))
+    step = max(1, max_rows - overlap)
+
+    out: List[str] = []
+    i = 0
+    while i < len(body):
+        part = body[i : i + max_rows]
+        if not part:
+            break
+        out.append("\n".join(header + part))
+        if i + max_rows >= len(body):
+            break
+        i += step
+    return out
+
+
+def _is_data_dense_text(text: str) -> bool:
+    """
+    Heuristic for chunks likely containing many entities/values where smaller windows
+    generally retrieve better than broad prose windows.
+    """
+    s = (text or "").strip()
+    if not s:
+        return False
+    lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+    if len(lines) >= 4:
+        short_lines = sum(1 for ln in lines if len(ln) <= 90)
+        if short_lines / max(1, len(lines)) >= 0.6:
+            return True
+    tokens = re.findall(r"\w+", s)
+    if not tokens:
+        return False
+    digit_tokens = sum(1 for t in tokens if any(ch.isdigit() for ch in t))
+    punct_separators = s.count(":") + s.count(";") + s.count("|")
+    return (digit_tokens / len(tokens) >= 0.2) or (punct_separators >= max(8, len(s) // 160))
+
+
+def _adaptive_chunk_params(text: str, chunk_size: int, overlap: int) -> Tuple[int, int]:
+    if not _is_data_dense_text(text):
+        return chunk_size, overlap
+    tuned_size = max(480, int(chunk_size * 0.68))
+    tuned_overlap = max(90, min(int(overlap * 0.75), tuned_size // 3))
+    return tuned_size, tuned_overlap
+
+
 def _find_chunk_end(text: str, start: int, chunk_size: int) -> int:
     text_len = len(text)
     hard_end = min(start + chunk_size, text_len)
@@ -443,11 +502,12 @@ def chunk_plain_text(
     """Overlapping prose chunks with natural boundaries."""
     chunk_size = chunk_size if chunk_size is not None else default_chunk_size()
     overlap = overlap if overlap is not None else default_chunk_overlap()
-    overlap = min(overlap, chunk_size // 2)
 
     text = normalize_pdf_text(text)
     if not text:
         return []
+    chunk_size, overlap = _adaptive_chunk_params(text, chunk_size, overlap)
+    overlap = min(overlap, chunk_size // 2)
 
     raw_chunks: List[str] = []
     start = 0
@@ -503,6 +563,7 @@ def chunk_content_blocks(
     chunk_size = chunk_size if chunk_size is not None else default_chunk_size()
     overlap = overlap if overlap is not None else default_chunk_overlap()
     table_max_rows = table_max_rows if table_max_rows is not None else default_table_max_rows_per_chunk()
+    table_row_overlap = default_table_row_overlap()
 
     out: List[TextChunk] = []
     prose_buf: List[str] = []
@@ -537,13 +598,15 @@ def chunk_content_blocks(
             prose_page = block.page
             prose_buf.append(block.text)
             combined = "\n\n".join(prose_buf)
-            if len(combined) >= chunk_size * 1.35:
+            effective_chunk_size, _ = _adaptive_chunk_params(combined, chunk_size, overlap)
+            flush_threshold = int(effective_chunk_size * 1.2)
+            if len(combined) >= max(420, flush_threshold):
                 flush_prose()
             continue
 
         flush_prose()
         section = block.section or prose_section
-        for part in _split_markdown_table(block.text, table_max_rows):
+        for part in _split_markdown_table_with_overlap(block.text, table_max_rows, table_row_overlap):
             header = _chunk_header(block.page, section, "table")
             out.append(
                 TextChunk(

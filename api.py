@@ -23,9 +23,11 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from chroma_helpers import create_chroma_client, delete_named_collection, get_or_create_vector_collection
 from env_load import format_env_search_list, load_dotenv_for_project
 from prompts import expand_question_shorthand
+from rag_eval import evaluate_chat_pairs
 from rag_metrics import accuracy_from_signals
 from rag_pipeline import retry_rag_llm_if_weak, run_pdf_rag_sync, stream_pdf_rag_llm_tokens
 from rag_routing import clean_answer_text
+from rag_sources import build_source_citations
 from retrieval_filter import MetaFilter
 from text_chunking import extract_and_chunk
 
@@ -56,6 +58,13 @@ def rag_chat_llm_num_predict() -> int:
         return max(160, int(os.getenv("RAG_CHAT_NUM_PREDICT", "320")))
     except ValueError:
         return 320
+
+
+def rag_chat_top_k() -> int:
+    try:
+        return max(2, min(10, int(os.getenv("RAG_CHAT_TOP_K", "7"))))
+    except ValueError:
+        return 5
 
 
 def context_memory_enabled() -> bool:
@@ -196,6 +205,39 @@ def init_db():
                 )
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS message_feedback (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    user_id BIGINT NOT NULL,
+                    message_id BIGINT NOT NULL,
+                    rating TINYINT NOT NULL,
+                    note TEXT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uniq_user_message_feedback (user_id, message_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS rag_eval_runs (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    user_id BIGINT NOT NULL,
+                    chat_id BIGINT NOT NULL,
+                    recall_at_k DOUBLE NOT NULL,
+                    faithfulness DOUBLE NOT NULL,
+                    answer_relevancy DOUBLE NOT NULL,
+                    overall DOUBLE NOT NULL,
+                    sample_count INT NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+                )
+                """
+            )
             try:
                 cur.execute("ALTER TABLE chats ADD COLUMN deleted_at TIMESTAMP NULL DEFAULT NULL")
             except pymysql.err.OperationalError as exc:
@@ -217,6 +259,7 @@ def init_db():
                 "ALTER TABLE messages ADD COLUMN accuracy_label VARCHAR(24) NULL DEFAULT NULL",
                 "ALTER TABLE messages ADD COLUMN accuracy_score INT NULL DEFAULT NULL",
                 "ALTER TABLE messages ADD COLUMN retrieval_context_json JSON NULL DEFAULT NULL",
+                "ALTER TABLE messages ADD COLUMN source_citations_json JSON NULL DEFAULT NULL",
             ):
                 try:
                     cur.execute(msg_col_sql)
@@ -311,12 +354,22 @@ class AssistantMessagePayload(BaseModel):
     accuracy_label: Optional[str] = None
     accuracy_score: Optional[int] = None
     retrieval_context: Optional[List[str]] = None
+    source_citations: Optional[List[Dict[str, Any]]] = None
 
 
 class ChatPatchPayload(BaseModel):
     title: Optional[str] = None
     pinned: Optional[bool] = None
     archived: Optional[bool] = None
+
+
+class MessageFeedbackPayload(BaseModel):
+    rating: int
+    note: Optional[str] = None
+
+
+class ChatEvalPayload(BaseModel):
+    chat_id: int
 
 
 def sse_event(payload: Dict) -> str:
@@ -328,6 +381,16 @@ def retrieval_context_json_for_db(contexts: Optional[List[str]]) -> Optional[str
         return None
     try:
         return json.dumps([str(c) for c in contexts if c is not None], ensure_ascii=False)
+    except Exception:
+        return None
+
+
+def source_citations_json_for_db(citations: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+    if not citations:
+        return None
+    try:
+        cleaned = [dict(c) for c in citations if isinstance(c, dict)]
+        return json.dumps(cleaned, ensure_ascii=False)
     except Exception:
         return None
 
@@ -348,6 +411,24 @@ def parse_stored_retrieval_context(raw: Any) -> List[str]:
         except Exception:
             return []
         return []
+    return []
+
+
+def parse_stored_source_citations(raw: Any) -> List[Dict[str, Any]]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [dict(x) for x in raw if isinstance(x, dict)]
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        try:
+            data = json.loads(s)
+            if isinstance(data, list):
+                return [dict(x) for x in data if isinstance(x, dict)]
+        except Exception:
+            return []
     return []
 
 
@@ -725,7 +806,7 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
                     ollama_base_url=OLLAMA_API_URL,
                     ollama_model=OLLAMA_MODEL,
                     prior_messages=prior_messages or None,
-                    top_k=3,
+                    top_k=rag_chat_top_k(),
                     temperature=rag_chat_llm_temperature(),
                     num_predict=rag_chat_llm_num_predict(),
                     allow_inference=True,
@@ -740,6 +821,7 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
             answer = clean_answer_text(answer, question)
             elapsed = round(time.perf_counter() - started_at, 2)
             acc_label, acc_score = accuracy_from_signals(answer, contexts, distances)
+            source_citations = build_source_citations(contexts)
             mysql_db = os.getenv("MYSQL_DATABASE", "rag_app")
             print(
                 "\n--- Question & answer (POST /api/chat) ---",
@@ -758,12 +840,16 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 (chat_id, question),
             )
             ctx_json = retrieval_context_json_for_db(contexts)
+            cites_json = source_citations_json_for_db(source_citations)
             cur.execute(
                 """
-                INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score, retrieval_context_json)
-                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s)
+                INSERT INTO messages (
+                    chat_id, role, content, retrieval_seconds, latency_seconds,
+                    accuracy_label, accuracy_score, retrieval_context_json, source_citations_json
+                )
+                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (chat_id, answer, retrieval_seconds, elapsed, acc_label, acc_score, ctx_json),
+                (chat_id, answer, retrieval_seconds, elapsed, acc_label, acc_score, ctx_json, cites_json),
             )
             if chat_id:
                 cur.execute(
@@ -786,6 +872,7 @@ def chat(payload: ChatPayload, user_id: int = Depends(auth_user)):
             "retrieval_seconds": retrieval_seconds,
             "accuracy_label": acc_label,
             "accuracy_score": acc_score,
+            "source_citations": source_citations,
             "latency_seconds": elapsed,
             "chat_id": chat_id,
         }
@@ -883,7 +970,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
             ollama_base_url=OLLAMA_API_URL,
             ollama_model=OLLAMA_MODEL,
             prior_messages=prior_messages or None,
-            top_k=3,
+            top_k=rag_chat_top_k(),
             temperature=rag_chat_llm_temperature(),
             num_predict=rag_chat_llm_num_predict(),
             allow_inference=True,
@@ -931,6 +1018,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 )
 
             acc_label, acc_score = accuracy_from_signals(final_answer, contexts, distances)
+            source_citations = build_source_citations(contexts)
             total_latency = max(0.01, round(time.perf_counter() - stream_wall0, 2))
             mysql_db = os.getenv("MYSQL_DATABASE", "rag_app")
             print(
@@ -945,12 +1033,13 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 flush=True,
             )
             ctx_json = retrieval_context_json_for_db(contexts)
+            cites_json = source_citations_json_for_db(source_citations)
             with conn.cursor() as cur:
                 if replace_id and replace_assistant_message_id:
                     cur.execute(
                         """
                         UPDATE messages SET content=%s, retrieval_seconds=%s, latency_seconds=%s,
-                            accuracy_label=%s, accuracy_score=%s, retrieval_context_json=%s
+                            accuracy_label=%s, accuracy_score=%s, retrieval_context_json=%s, source_citations_json=%s
                         WHERE id=%s AND chat_id=%s
                         """,
                         (
@@ -960,6 +1049,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                             acc_label,
                             acc_score,
                             ctx_json,
+                            cites_json,
                             replace_assistant_message_id,
                             chat_id,
                         ),
@@ -967,10 +1057,13 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                 else:
                     cur.execute(
                         """
-                        INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score, retrieval_context_json)
-                        VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s)
+                        INSERT INTO messages (
+                            chat_id, role, content, retrieval_seconds, latency_seconds,
+                            accuracy_label, accuracy_score, retrieval_context_json, source_citations_json
+                        )
+                        VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (chat_id, final_answer, retrieval_seconds, total_latency, acc_label, acc_score, ctx_json),
+                        (chat_id, final_answer, retrieval_seconds, total_latency, acc_label, acc_score, ctx_json, cites_json),
                     )
                 cur.execute(
                     "SELECT content FROM messages WHERE chat_id=%s AND role='user' ORDER BY id ASC LIMIT 8",
@@ -994,6 +1087,7 @@ def chat_stream(payload: ChatPayload, user_id: int = Depends(auth_user)):
                     "latency_seconds": total_latency,
                     "accuracy_label": acc_label,
                     "accuracy_score": acc_score,
+                    "source_citations": source_citations,
                 }
             )
         except Exception as exc:
@@ -1047,15 +1141,30 @@ def chat_messages(chat_id: int, user_id: int = Depends(auth_user)):
 
             cur.execute(
                 """
-                SELECT id, role, content, created_at, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score, retrieval_context_json
+                SELECT id, role, content, created_at, retrieval_seconds, latency_seconds,
+                       accuracy_label, accuracy_score, retrieval_context_json, source_citations_json
                 FROM messages WHERE chat_id=%s ORDER BY id ASC
                 """,
                 (chat_id,),
             )
             messages = cur.fetchall()
+            msg_ids = [int(row["id"]) for row in messages if row.get("id") is not None]
+            feedback_map: Dict[int, int] = {}
+            if msg_ids:
+                placeholders = ",".join(["%s"] * len(msg_ids))
+                cur.execute(
+                    f"SELECT message_id, rating FROM message_feedback WHERE user_id=%s AND message_id IN ({placeholders})",
+                    tuple([user_id] + msg_ids),
+                )
+                for fb in cur.fetchall() or []:
+                    mid = int(fb.get("message_id"))
+                    feedback_map[mid] = int(fb.get("rating"))
             for row in messages:
                 raw_ctx = row.pop("retrieval_context_json", None)
+                raw_cites = row.pop("source_citations_json", None)
                 row["retrieval_context"] = parse_stored_retrieval_context(raw_ctx)
+                row["source_citations"] = parse_stored_source_citations(raw_cites)
+                row["feedback_rating"] = feedback_map.get(int(row["id"]), 0)
         return {"messages": messages}
     finally:
         conn.close()
@@ -1151,10 +1260,14 @@ def save_assistant_message(chat_id: int, payload: AssistantMessagePayload, user_
                 raise HTTPException(status_code=404, detail="Chat not found.")
 
             ctx_json = retrieval_context_json_for_db(payload.retrieval_context)
+            cites_json = source_citations_json_for_db(payload.source_citations)
             cur.execute(
                 """
-                INSERT INTO messages (chat_id, role, content, retrieval_seconds, latency_seconds, accuracy_label, accuracy_score, retrieval_context_json)
-                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s)
+                INSERT INTO messages (
+                    chat_id, role, content, retrieval_seconds, latency_seconds,
+                    accuracy_label, accuracy_score, retrieval_context_json, source_citations_json
+                )
+                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     chat_id,
@@ -1164,9 +1277,104 @@ def save_assistant_message(chat_id: int, payload: AssistantMessagePayload, user_
                     payload.accuracy_label,
                     payload.accuracy_score,
                     ctx_json,
+                    cites_json,
                 ),
             )
         return {"message": "Assistant message saved."}
+    finally:
+        conn.close()
+
+
+@app.post("/api/messages/{message_id}/feedback")
+def save_message_feedback(message_id: int, payload: MessageFeedbackPayload, user_id: int = Depends(auth_user)):
+    rating = int(payload.rating)
+    if rating not in (-1, 1):
+        raise HTTPException(status_code=400, detail="rating must be either -1 or 1.")
+    note = (payload.note or "").strip()[:1000] or None
+
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT m.id
+                FROM messages m
+                INNER JOIN chats c ON c.id = m.chat_id
+                WHERE m.id=%s AND c.user_id=%s AND c.deleted_at IS NULL
+                """,
+                (message_id, user_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Message not found.")
+            cur.execute(
+                """
+                INSERT INTO message_feedback (user_id, message_id, rating, note)
+                VALUES (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE rating=VALUES(rating), note=VALUES(note), updated_at=CURRENT_TIMESTAMP
+                """,
+                (user_id, message_id, rating, note),
+            )
+        return {"message": "Feedback saved.", "rating": rating}
+    finally:
+        conn.close()
+
+
+@app.post("/api/evals/chat")
+def run_chat_eval(payload: ChatEvalPayload, user_id: int = Depends(auth_user)):
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM chats WHERE id=%s AND user_id=%s AND deleted_at IS NULL",
+                (payload.chat_id, user_id),
+            )
+            chat = cur.fetchone()
+            if not chat:
+                raise HTTPException(status_code=404, detail="Chat not found.")
+            cur.execute(
+                """
+                SELECT role, content, retrieval_context_json
+                FROM messages
+                WHERE chat_id=%s
+                ORDER BY id ASC
+                """,
+                (payload.chat_id,),
+            )
+            rows = cur.fetchall() or []
+
+            pairs: List[Dict[str, Any]] = []
+            pending_q: Optional[str] = None
+            for row in rows:
+                role = str(row.get("role") or "")
+                content = str(row.get("content") or "").strip()
+                if role == "user":
+                    pending_q = content
+                    continue
+                if role != "assistant" or pending_q is None:
+                    continue
+                contexts = parse_stored_retrieval_context(row.get("retrieval_context_json"))
+                pairs.append({"question": pending_q, "answer": content, "contexts": contexts})
+                pending_q = None
+
+            report = evaluate_chat_pairs(pairs)
+            avg = report.get("averages") or {}
+            cur.execute(
+                """
+                INSERT INTO rag_eval_runs (user_id, chat_id, recall_at_k, faithfulness, answer_relevancy, overall, sample_count)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    user_id,
+                    payload.chat_id,
+                    float(avg.get("recall_at_k", 0.0)),
+                    float(avg.get("faithfulness", 0.0)),
+                    float(avg.get("answer_relevancy", 0.0)),
+                    float(avg.get("overall", 0.0)),
+                    int(report.get("count", 0)),
+                ),
+            )
+        return {"chat_id": payload.chat_id, "report": report}
     finally:
         conn.close()
 

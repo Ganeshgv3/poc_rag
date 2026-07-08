@@ -156,6 +156,48 @@ function IconStop({ className = "", ...rest }) {
   );
 }
 
+function IconThumbUp({ className = "", ...rest }) {
+  return (
+    <svg
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <path d="M7 10v11" />
+      <path d="M17 10h-4l1-5v-1a2 2 0 0 0-2-2l-3 7v11h9a2 2 0 0 0 2-2l1-6.5a2 2 0 0 0-2-2.5z" />
+    </svg>
+  );
+}
+
+function IconThumbDown({ className = "", ...rest }) {
+  return (
+    <svg
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <path d="M17 14V3" />
+      <path d="M7 14h4l-1 5v1a2 2 0 0 0 2 2l3-7V4H6a2 2 0 0 0-2 2l-1 6.5A2 2 0 0 0 5 15h2z" />
+    </svg>
+  );
+}
+
 function DocIconEdit({ className = "", ...rest }) {
   return (
     <svg
@@ -283,6 +325,24 @@ function normalizeMessageRow(m) {
     }
   } else {
     out.retrieval_context = [];
+  }
+  if (Array.isArray(out.source_citations)) {
+    out.source_citations = out.source_citations.filter((c) => c && typeof c === "object");
+  } else if (out.source_citations != null && typeof out.source_citations === "string") {
+    try {
+      const parsed = JSON.parse(out.source_citations);
+      out.source_citations = Array.isArray(parsed) ? parsed.filter((c) => c && typeof c === "object") : [];
+    } catch {
+      out.source_citations = [];
+    }
+  } else {
+    out.source_citations = [];
+  }
+  if (out.feedback_rating != null && out.feedback_rating !== "") {
+    const n = Number(out.feedback_rating);
+    out.feedback_rating = Number.isFinite(n) ? n : 0;
+  } else {
+    out.feedback_rating = 0;
   }
   return out;
 }
@@ -576,7 +636,25 @@ export default function ChatPage() {
     if (Number.isFinite(message.latency_seconds)) {
       parts.push(`Total: ${message.latency_seconds}s`);
     }
+    if (Array.isArray(message.source_citations) && message.source_citations.length) {
+      parts.push(`Sources: ${message.source_citations.length}`);
+    }
     return parts.length ? parts.join(" • ") : "";
+  };
+
+  const submitAssistantFeedback = async (messageId, rating) => {
+    if (!Number.isFinite(Number(messageId))) return;
+    try {
+      await api.post(`/messages/${messageId}/feedback`, { rating });
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId ? { ...msg, feedback_rating: rating } : msg
+        )
+      );
+      showSuccessToast(rating > 0 ? "Marked helpful." : "Marked not helpful.");
+    } catch (err) {
+      setError(err.response?.data?.detail || "Failed to save feedback.");
+    }
   };
 
   useEffect(() => {
@@ -838,6 +916,7 @@ export default function ChatPage() {
                       retrieval_seconds: mergedRs !== undefined ? mergedRs : msg.retrieval_seconds,
                       accuracy_label: accuracy.label,
                       accuracy_score: accuracy.score,
+                      source_citations: Array.isArray(payload.source_citations) ? payload.source_citations : [],
                     }
                   : msg
               )
@@ -1677,6 +1756,41 @@ export default function ChatPage() {
                     const metaLine = formatAssistantMetrics(message);
                     return metaLine ? <div className="message-meta">{metaLine}</div> : null;
                   })()}
+                  {message.role === "assistant" && Array.isArray(message.source_citations) && message.source_citations.length ? (
+                    <div className="message-meta">
+                      {message.source_citations.slice(0, 3).map((src, i) => {
+                        const page = src?.page != null ? `p.${src.page}` : "source";
+                        const section = src?.section ? ` ${src.section}` : "";
+                        return (
+                          <div key={`${message.id || index}-src-${i}`} title={String(src?.snippet || "")}>
+                            [{i + 1}] {page}{section}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  {message.role === "assistant" && Number.isFinite(Number(message.id)) ? (
+                    <div className="message-meta">
+                      <button
+                        type="button"
+                        className={`copy-answer-btn${Number(message.feedback_rating) === 1 ? " active" : ""}`}
+                        onClick={() => submitAssistantFeedback(message.id, 1)}
+                        aria-label="Mark answer helpful"
+                        title="Helpful"
+                      >
+                        <IconThumbUp className="copy-answer-btn-icon" />
+                      </button>
+                      <button
+                        type="button"
+                        className={`copy-answer-btn${Number(message.feedback_rating) === -1 ? " active" : ""}`}
+                        onClick={() => submitAssistantFeedback(message.id, -1)}
+                        aria-label="Mark answer not helpful"
+                        title="Not helpful"
+                      >
+                        <IconThumbDown className="copy-answer-btn-icon" />
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
               ))
